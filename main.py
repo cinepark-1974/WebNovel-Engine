@@ -223,18 +223,69 @@ def call_claude_opus(prompt, max_tokens=8000, system=None):
 
 
 def safe_json(raw):
+    """
+    LLM이 반환한 텍스트에서 JSON 추출 & 파싱.
+    여러 단계 정제를 거침:
+      1. 마크다운 코드블록 제거
+      2. { ... } 또는 [ ... ] 블록만 추출 (JSON 앞뒤에 설명 섞여도 OK)
+      3. 제어 문자 제거
+      4. 끝부분 trailing comma 제거
+    """
     if not raw:
         return None
+
+    # 1단계: 마크다운 코드블록 제거
     cleaned = re.sub(r"```json\s*", "", raw)
-    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+    cleaned = re.sub(r"```\s*", "", cleaned).strip()
+
+    # 2단계: 첫 { 부터 매칭되는 } 까지 추출 (또는 [ ... ])
+    def extract_json_block(text):
+        """중괄호/대괄호 균형 맞는 JSON 블록 추출."""
+        for open_c, close_c in [("{", "}"), ("[", "]")]:
+            start = text.find(open_c)
+            if start < 0:
+                continue
+            depth = 0
+            in_string = False
+            escape = False
+            for i in range(start, len(text)):
+                ch = text[i]
+                if escape:
+                    escape = False
+                    continue
+                if ch == "\\":
+                    escape = True
+                    continue
+                if ch == '"' and not escape:
+                    in_string = not in_string
+                    continue
+                if in_string:
+                    continue
+                if ch == open_c:
+                    depth += 1
+                elif ch == close_c:
+                    depth -= 1
+                    if depth == 0:
+                        return text[start:i + 1]
+        return None
+
+    block = extract_json_block(cleaned)
+    if block:
+        cleaned = block
+
+    # 3단계: 문제되는 제어 문자 제거 (JSON 외 문자열 안 제어 문자는 유지)
+    cleaned = "".join(
+        ch for ch in cleaned
+        if ch >= " " or ch in "\n\r\t"
+    )
+
+    # 4단계: trailing comma 제거
+    cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
+
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
-        cleaned2 = re.sub(r",\s*([}\]])", r"\1", cleaned)
-        try:
-            return json.loads(cleaned2)
-        except json.JSONDecodeError:
-            return None
+        return None
 
 # ══════════════════════════════════════════════
 # Session State 초기화
@@ -439,7 +490,9 @@ with main_tabs[0]:
                         st.session_state.concept_card = card
                         st.success(f"✅ 컨셉 카드 생성 완료 — '{card.get('title','')}'")
                     else:
-                        st.error("컨셉 카드 파싱 실패. 다시 시도해 주세요.")
+                        st.error("컨셉 카드 파싱 실패. 아래 응답을 확인하시고 다시 시도해 주세요.")
+                        with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                            st.code(raw[:3000] if raw else "응답 없음", language="json")
 
     # ── 1-B: 아이디어 생성 ──
     with sub_tabs_1[1]:
@@ -466,7 +519,9 @@ with main_tabs[0]:
                     st.session_state.concept_card = card
                     st.success(f"✅ 컨셉 카드 생성 완료 — '{card.get('title','')}'")
                 else:
-                    st.error("컨셉 카드 파싱 실패.")
+                    st.error("컨셉 카드 파싱 실패. 아래 응답을 확인하시고 다시 시도해 주세요.")
+                    with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                        st.code(raw[:3000] if raw else "응답 없음", language="json")
 
     # ── 1-C: 직접 입력 ──
     with sub_tabs_1[2]:
