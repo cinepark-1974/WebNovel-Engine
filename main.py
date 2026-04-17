@@ -15,6 +15,7 @@ from datetime import datetime
 
 from prompt import (
     SYSTEM_PROMPT, GENRE_RULES, WEB_NOVEL_FORMULAS, CLIFFHANGER_TYPES,
+    PLATFORM_LENGTH, get_platform_length,
     build_parse_brief_prompt, build_generate_concept_prompt, build_augment_concept_prompt,
     build_core_arc_prompt, build_extension_arc_prompt,
     build_plant_payoff_prompt, build_character_bible_prompt,
@@ -23,6 +24,9 @@ from prompt import (
     build_quality_check_prompt, build_episode_summary_prompt,
 )
 from parser import parse_brief
+from docx_builder import (
+    build_episode_docx, build_season_docx, build_proposal_docx,
+)
 
 # ══════════════════════════════════════════════
 # Page Config
@@ -542,12 +546,20 @@ with main_tabs[0]:
         # ── 연재 설정 ──
         st.divider()
         section_header("연재 설정", "SERIAL CONFIG")
+
         col_s1, col_s2, col_s3 = st.columns(3)
         with col_s1:
+            platform = st.selectbox(
+                "플랫폼",
+                list(PLATFORM_LENGTH.keys()),
+                index=0,
+                help="플랫폼별 표준 분량이 자동 설정됩니다",
+            )
+            lp = get_platform_length(platform)
+            st.caption(f"표준: {lp['min']:,}~{lp['max']:,}자 (공백 포함)")
             core_eps = st.number_input("Core Arc 회차", min_value=20, max_value=100, value=50, step=10)
-            max_extension = st.number_input("최대 Extension 회차", min_value=0, max_value=100, value=50, step=10)
         with col_s2:
-            target_length = st.number_input("회차당 분량(자)", min_value=2000, max_value=6000, value=3500, step=500)
+            max_extension = st.number_input("최대 Extension 회차", min_value=0, max_value=100, value=50, step=10)
             rating_mode = st.selectbox("수위 모드", ["듀얼(19+15)", "19금만", "15금만"])
         with col_s3:
             paywall_ep = st.number_input("과금 전환 회차", min_value=5, max_value=40, value=25, step=5)
@@ -559,14 +571,15 @@ with main_tabs[0]:
 
         if st.button("✅ 연재 설정 저장 → STEP 2로", type="primary"):
             st.session_state.concept_card["serial_config"] = {
+                "platform": platform,
                 "core_eps": core_eps,
                 "max_extension": max_extension,
-                "target_length": target_length,
+                "target_length": lp["target"],
                 "rating_mode": rating_mode,
                 "paywall_ep": paywall_ep,
             }
             st.session_state.style_dna = style_sample
-            st.success("✅ 연재 설정 저장 완료. STEP 2 BUILD-UP 탭으로 이동하세요.")
+            st.success(f"✅ 연재 설정 저장 완료 ({platform} · {lp['min']:,}~{lp['max']:,}자). STEP 2 BUILD-UP 탭으로 이동하세요.")
 
 
 # ══════════════════════════════════════════════════════════════
@@ -745,7 +758,12 @@ with main_tabs[1]:
 
                 if ep_select in st.session_state.episode_plots:
                     plot = st.session_state.episode_plots[ep_select]
-                    st.markdown(f"### EP{ep_select}. {plot.get('title','')}")
+                    title_type = plot.get("title_type", "")
+                    title_badge = f' <span class="seq">{title_type}</span>' if title_type else ""
+                    st.markdown(
+                        f"### EP{ep_select}. {plot.get('title','')}{title_badge}",
+                        unsafe_allow_html=True,
+                    )
                     opening = plot.get("opening", {})
                     dev = plot.get("development", {})
                     cliff = plot.get("cliffhanger", {})
@@ -905,7 +923,8 @@ with main_tabs[2]:
 
         config = concept.get("serial_config", {})
         rating_mode = config.get("rating_mode", "듀얼(19+15)")
-        target_length = config.get("target_length", 3500)
+        platform = config.get("platform", "카카오페이지")
+        target_length = config.get("target_length", 5200)
 
         # ── 3-1 19금 집필 ──
         with sub_tabs_3[0]:
@@ -951,6 +970,7 @@ with main_tabs[2]:
                                 producer_note=st.session_state.producer_note,
                                 style_strength=st.session_state.style_strength,
                                 target_length=target_length,
+                                platform=platform,
                             ),
                             MAX_TOKENS_EPISODE,
                         )
@@ -966,10 +986,30 @@ with main_tabs[2]:
 
                 if ep_write in st.session_state.episodes_19:
                     text = st.session_state.episodes_19[ep_write]
-                    st.markdown(
-                        f'<span class="rating-badge-19">19금</span> **EP{ep_write}** — {len(text)}자',
-                        unsafe_allow_html=True,
-                    )
+                    # 첫 줄에서 제목 추출
+                    lines = text.strip().split("\n")
+                    title_line = lines[0].strip() if lines else f"EP{ep_write}"
+
+                    col_title, col_dl = st.columns([3, 1])
+                    with col_title:
+                        st.markdown(
+                            f'<span class="rating-badge-19">19금</span> '
+                            f'**{title_line}** · {len(text):,}자',
+                            unsafe_allow_html=True,
+                        )
+                    with col_dl:
+                        # 개별 DOCX 다운로드
+                        plot_data = st.session_state.episode_plots.get(ep_write, {})
+                        docx_bytes = build_episode_docx(
+                            text, ep_write, concept, plot_data, "19", platform,
+                        )
+                        st.download_button(
+                            "📄 DOCX",
+                            data=docx_bytes,
+                            file_name=f"EP{ep_write:03d}_19금.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key=f"dlx19_{ep_write}",
+                        )
                     st.text_area("원고", value=text, height=500, key=f"ep19_{ep_write}")
 
         # ── 3-2 15금 변환 ──
@@ -999,12 +1039,36 @@ with main_tabs[2]:
                     if ep_conv in st.session_state.episodes_19 and ep_conv in st.session_state.episodes_15:
                         col19, col15 = st.columns(2)
                         with col19:
-                            st.markdown('<span class="rating-badge-19">19금 원본</span>', unsafe_allow_html=True)
-                            st.text_area("19금", value=st.session_state.episodes_19[ep_conv],
+                            text_19 = st.session_state.episodes_19[ep_conv]
+                            title_19 = text_19.strip().split("\n")[0] if text_19.strip() else ""
+                            st.markdown(
+                                f'<span class="rating-badge-19">19금 원본</span> {title_19}',
+                                unsafe_allow_html=True,
+                            )
+                            st.text_area("19금", value=text_19,
                                          height=400, key=f"cmp19_{ep_conv}")
                         with col15:
-                            st.markdown('<span class="rating-badge-15">15금 변환</span>', unsafe_allow_html=True)
-                            st.text_area("15금", value=st.session_state.episodes_15[ep_conv],
+                            text_15 = st.session_state.episodes_15[ep_conv]
+                            title_15 = text_15.strip().split("\n")[0] if text_15.strip() else ""
+                            col_h1, col_h2 = st.columns([3, 1])
+                            with col_h1:
+                                st.markdown(
+                                    f'<span class="rating-badge-15">15금 변환</span> {title_15}',
+                                    unsafe_allow_html=True,
+                                )
+                            with col_h2:
+                                plot_data = st.session_state.episode_plots.get(ep_conv, {})
+                                docx_bytes_15 = build_episode_docx(
+                                    text_15, ep_conv, concept, plot_data, "15", platform,
+                                )
+                                st.download_button(
+                                    "📄 DOCX",
+                                    data=docx_bytes_15,
+                                    file_name=f"EP{ep_conv:03d}_15금.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key=f"dlx15_{ep_conv}",
+                                )
+                            st.text_area("15금", value=text_15,
                                          height=400, key=f"cmp15_{ep_conv}")
 
         # ── 3-3 품질 체크 ──
@@ -1063,41 +1127,173 @@ with main_tabs[2]:
 
             eps_19 = st.session_state.episodes_19
             eps_15 = st.session_state.episodes_15
+            plots = st.session_state.episode_plots
 
             if not eps_19 and not eps_15:
                 st.info("집필된 회차가 없습니다.")
             else:
-                st.markdown(f"**19금:** {len(eps_19)}회차 | **15금:** {len(eps_15)}회차")
+                st.markdown(f"**19금:** {len(eps_19)}회차 · **15금:** {len(eps_15)}회차 · **플랫폼:** {platform}")
 
-                if st.button("📦 전체 ZIP 다운로드", type="primary"):
-                    buf = io.BytesIO()
-                    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-                        title = concept.get("title", "webnovel")
-                        for ep_num in sorted(eps_19.keys()):
-                            zf.writestr(f"19금/EP{ep_num:03d}.txt", eps_19[ep_num])
-                        for ep_num in sorted(eps_15.keys()):
-                            zf.writestr(f"15금/EP{ep_num:03d}.txt", eps_15[ep_num])
-                        zf.writestr("metadata/concept_card.json",
-                                    json.dumps(concept, ensure_ascii=False, indent=2))
-                        if st.session_state.core_arc:
-                            zf.writestr("metadata/core_arc.json",
-                                        json.dumps(st.session_state.core_arc, ensure_ascii=False, indent=2))
-                        if st.session_state.extension_arc:
-                            zf.writestr("metadata/extension_arc.json",
-                                        json.dumps(st.session_state.extension_arc, ensure_ascii=False, indent=2))
-                        if st.session_state.plant_map_core:
-                            zf.writestr("metadata/plant_map_core.json",
-                                        json.dumps(st.session_state.plant_map_core, ensure_ascii=False, indent=2))
-                        if st.session_state.character_bible:
-                            zf.writestr("metadata/character_bible.json",
-                                        json.dumps(st.session_state.character_bible, ensure_ascii=False, indent=2))
+                # ── 3가지 다운로드 옵션 ──
+                col_dl1, col_dl2, col_dl3 = st.columns(3)
 
-                    st.download_button(
-                        f"⬇️ {title}_전체.zip",
-                        data=buf.getvalue(),
-                        file_name=f"{title}_{datetime.now().strftime('%Y%m%d')}.zip",
-                        mime="application/zip",
+                # 1. 기획서 DOCX
+                with col_dl1:
+                    st.markdown("**📘 기획서 DOCX**")
+                    st.caption("투자/피칭용 · 컨셉+캐릭터+아크+떡밥")
+                    proposal_bytes = build_proposal_docx(
+                        concept,
+                        character_bible=st.session_state.character_bible,
+                        core_arc=st.session_state.core_arc,
+                        plant_map=st.session_state.plant_map_core,
                     )
+                    title = concept.get("title", "webnovel")
+                    st.download_button(
+                        "⬇️ 기획서 다운로드",
+                        data=proposal_bytes,
+                        file_name=f"{title}_기획서_{datetime.now().strftime('%Y%m%d')}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                        key="dl_proposal",
+                    )
+
+                # 2. 시즌 전체 DOCX (19금/15금 각각)
+                with col_dl2:
+                    st.markdown("**📚 시즌 전체 DOCX**")
+                    st.caption("회차 통합 · 커버+목차+본문")
+                    if eps_19:
+                        season_19_bytes = build_season_docx(eps_19, concept, "19", platform)
+                        st.download_button(
+                            "⬇️ 19금 시즌 전체",
+                            data=season_19_bytes,
+                            file_name=f"{title}_시즌1_19금_{datetime.now().strftime('%Y%m%d')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key="dl_season_19",
+                        )
+                    if eps_15:
+                        season_15_bytes = build_season_docx(eps_15, concept, "15", platform)
+                        st.download_button(
+                            "⬇️ 15금 시즌 전체",
+                            data=season_15_bytes,
+                            file_name=f"{title}_시즌1_15금_{datetime.now().strftime('%Y%m%d')}.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key="dl_season_15",
+                        )
+
+                # 3. 전체 ZIP
+                with col_dl3:
+                    st.markdown("**📦 전체 ZIP**")
+                    st.caption("모든 회차 TXT+DOCX · 메타데이터")
+                    if st.button("🗂️ ZIP 생성", type="primary", key="make_zip"):
+                        buf = io.BytesIO()
+                        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                            # 19금 TXT + DOCX
+                            for ep_num in sorted(eps_19.keys()):
+                                text = eps_19[ep_num]
+                                zf.writestr(f"19금/TXT/EP{ep_num:03d}.txt", text)
+                                plot_data = plots.get(ep_num, {})
+                                ep_docx = build_episode_docx(
+                                    text, ep_num, concept, plot_data, "19", platform,
+                                )
+                                zf.writestr(f"19금/DOCX/EP{ep_num:03d}.docx", ep_docx)
+                            # 15금 TXT + DOCX
+                            for ep_num in sorted(eps_15.keys()):
+                                text = eps_15[ep_num]
+                                zf.writestr(f"15금/TXT/EP{ep_num:03d}.txt", text)
+                                plot_data = plots.get(ep_num, {})
+                                ep_docx = build_episode_docx(
+                                    text, ep_num, concept, plot_data, "15", platform,
+                                )
+                                zf.writestr(f"15금/DOCX/EP{ep_num:03d}.docx", ep_docx)
+
+                            # 기획서 DOCX
+                            zf.writestr(
+                                f"{title}_기획서.docx",
+                                build_proposal_docx(
+                                    concept,
+                                    character_bible=st.session_state.character_bible,
+                                    core_arc=st.session_state.core_arc,
+                                    plant_map=st.session_state.plant_map_core,
+                                ),
+                            )
+
+                            # 시즌 전체 DOCX
+                            if eps_19:
+                                zf.writestr(
+                                    f"{title}_시즌1_19금_전체.docx",
+                                    build_season_docx(eps_19, concept, "19", platform),
+                                )
+                            if eps_15:
+                                zf.writestr(
+                                    f"{title}_시즌1_15금_전체.docx",
+                                    build_season_docx(eps_15, concept, "15", platform),
+                                )
+
+                            # 메타데이터 JSON
+                            zf.writestr("metadata/concept_card.json",
+                                        json.dumps(concept, ensure_ascii=False, indent=2))
+                            if st.session_state.core_arc:
+                                zf.writestr("metadata/core_arc.json",
+                                            json.dumps(st.session_state.core_arc, ensure_ascii=False, indent=2))
+                            if st.session_state.extension_arc:
+                                zf.writestr("metadata/extension_arc.json",
+                                            json.dumps(st.session_state.extension_arc, ensure_ascii=False, indent=2))
+                            if st.session_state.plant_map_core:
+                                zf.writestr("metadata/plant_map_core.json",
+                                            json.dumps(st.session_state.plant_map_core, ensure_ascii=False, indent=2))
+                            if st.session_state.character_bible:
+                                zf.writestr("metadata/character_bible.json",
+                                            json.dumps(st.session_state.character_bible, ensure_ascii=False, indent=2))
+                            if plots:
+                                zf.writestr("metadata/episode_plots.json",
+                                            json.dumps({str(k): v for k, v in plots.items()},
+                                                       ensure_ascii=False, indent=2))
+
+                        st.download_button(
+                            f"⬇️ {title}_전체.zip",
+                            data=buf.getvalue(),
+                            file_name=f"{title}_{datetime.now().strftime('%Y%m%d')}.zip",
+                            mime="application/zip",
+                            key="dl_zip",
+                        )
+
+                # ── 개별 회차 다운로드 ──
+                st.divider()
+                sub_header("개별 회차 다운로드")
+
+                col_ind1, col_ind2 = st.columns(2)
+                with col_ind1:
+                    st.markdown("**19금 회차별**")
+                    for ep_num in sorted(eps_19.keys()):
+                        text = eps_19[ep_num]
+                        title_line = text.strip().split("\n")[0] if text.strip() else f"EP{ep_num}"
+                        plot_data = plots.get(ep_num, {})
+                        ep_docx_bytes = build_episode_docx(
+                            text, ep_num, concept, plot_data, "19", platform,
+                        )
+                        st.download_button(
+                            f"EP{ep_num:03d}. {title_line[:20]}",
+                            data=ep_docx_bytes,
+                            file_name=f"EP{ep_num:03d}_19금.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key=f"dl_ind_19_{ep_num}",
+                        )
+
+                with col_ind2:
+                    st.markdown("**15금 회차별**")
+                    for ep_num in sorted(eps_15.keys()):
+                        text = eps_15[ep_num]
+                        title_line = text.strip().split("\n")[0] if text.strip() else f"EP{ep_num}"
+                        plot_data = plots.get(ep_num, {})
+                        ep_docx_bytes = build_episode_docx(
+                            text, ep_num, concept, plot_data, "15", platform,
+                        )
+                        st.download_button(
+                            f"EP{ep_num:03d}. {title_line[:20]}",
+                            data=ep_docx_bytes,
+                            file_name=f"EP{ep_num:03d}_15금.docx",
+                            mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                            key=f"dl_ind_15_{ep_num}",
+                        )
 
 # ══════════════════════════════════════════════
 # Footer
