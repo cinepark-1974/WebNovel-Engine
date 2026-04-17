@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.0 — main.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.1 — main.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 © 2026 BLUE JEANS PICTURES
@@ -325,6 +325,116 @@ with st.expander("🎬 프로듀서 노트 (전역 적용)", expanded=False):
         placeholder="예: 대사 짧고 건조하게. 관능 씬은 촉각 중심. 여주 내면 독백 비중 높게.",
         label_visibility="collapsed",
     )
+
+# ══════════════════════════════════════════════
+# 프로젝트 Save/Load (전역)
+# ══════════════════════════════════════════════
+PROJECT_KEYS = [
+    "concept_card", "core_arc", "core_arc_summaries",
+    "extension_arc", "extension_mode", "extension_eps", "reader_feedback",
+    "plant_map_core", "plant_map_extension", "character_bible",
+    "episode_plots", "episodes_19", "episodes_15", "episode_summaries",
+    "producer_note", "style_dna", "style_strength", "brief_text",
+]
+
+
+def build_project_snapshot():
+    """현재 세션 상태 전체를 JSON-serializable dict로 변환."""
+    snap = {"_engine_version": "2.1", "_saved_at": datetime.now().isoformat()}
+    for k in PROJECT_KEYS:
+        val = st.session_state.get(k)
+        # episode_plots, episodes_19/15, episode_summaries는 int 키 → str 키
+        if isinstance(val, dict) and val and all(isinstance(kk, int) for kk in val.keys()):
+            snap[k] = {str(kk): vv for kk, vv in val.items()}
+        else:
+            snap[k] = val
+    return snap
+
+
+def restore_project_snapshot(snap):
+    """저장된 스냅샷을 세션 상태에 복원."""
+    if not isinstance(snap, dict):
+        return False
+    for k in PROJECT_KEYS:
+        if k not in snap:
+            continue
+        val = snap[k]
+        # episodes_*, episode_plots는 키를 다시 int로
+        if k in ("episode_plots", "episodes_19", "episodes_15", "episode_summaries"):
+            if isinstance(val, dict):
+                try:
+                    val = {int(kk): vv for kk, vv in val.items()}
+                except (ValueError, TypeError):
+                    pass
+        st.session_state[k] = val
+    return True
+
+
+with st.expander("💾 프로젝트 저장 / 불러오기", expanded=False):
+    col_save, col_load = st.columns(2)
+
+    with col_save:
+        st.markdown("**💾 현재 작업 저장**")
+        st.caption("지금까지의 모든 작업(컨셉 카드·아크·떡밥·바이블·플롯·원고)을 JSON 파일로 백업")
+        snapshot = build_project_snapshot()
+        snapshot_json = json.dumps(snapshot, ensure_ascii=False, indent=2)
+
+        title_for_file = st.session_state.concept_card.get("title", "webnovel")
+        st.download_button(
+            "⬇️ 프로젝트 JSON 다운로드",
+            data=snapshot_json.encode("utf-8"),
+            file_name=f"{title_for_file}_project_{datetime.now().strftime('%Y%m%d_%H%M')}.json",
+            mime="application/json",
+            key="proj_save",
+        )
+
+        # 상태 요약
+        status_bits = []
+        if st.session_state.concept_card.get("title"):
+            status_bits.append(f"컨셉: {st.session_state.concept_card.get('title', '')}")
+        if st.session_state.core_arc:
+            n_eps = sum(len(b.get("episodes", [])) for b in st.session_state.core_arc)
+            status_bits.append(f"Core Arc {n_eps}화")
+        if st.session_state.plant_map_core:
+            status_bits.append(f"떡밥 {len(st.session_state.plant_map_core.get('plants', []))}개")
+        if st.session_state.character_bible:
+            status_bits.append("바이블 ✓")
+        if st.session_state.episode_plots:
+            status_bits.append(f"플롯 {len(st.session_state.episode_plots)}개")
+        if st.session_state.episodes_19:
+            status_bits.append(f"19금 원고 {len(st.session_state.episodes_19)}회차")
+        if st.session_state.episodes_15:
+            status_bits.append(f"15금 원고 {len(st.session_state.episodes_15)}회차")
+        if status_bits:
+            st.info(" · ".join(status_bits))
+        else:
+            st.caption("아직 저장할 작업 없음")
+
+    with col_load:
+        st.markdown("**📂 저장된 프로젝트 불러오기**")
+        st.caption("이전에 저장한 프로젝트 JSON을 업로드하면 세션이 복원됨")
+        uploaded_proj = st.file_uploader(
+            "프로젝트 JSON 업로드",
+            type=["json"],
+            key="proj_upload",
+            label_visibility="collapsed",
+        )
+        if uploaded_proj:
+            try:
+                snap_raw = uploaded_proj.getvalue().decode("utf-8")
+                snap = json.loads(snap_raw)
+                if st.button("📂 불러오기 실행", type="primary", key="proj_load_btn"):
+                    if restore_project_snapshot(snap):
+                        st.success(
+                            f"✅ 프로젝트 복원 완료 — "
+                            f"'{snap.get('concept_card', {}).get('title', '(제목 없음)')}' "
+                            f"(저장 시각: {snap.get('_saved_at', '?')[:16]})"
+                        )
+                        st.rerun()
+                    else:
+                        st.error("프로젝트 복원 실패 — JSON 형식을 확인해 주세요.")
+            except Exception as e:
+                st.error(f"JSON 파싱 실패: {e}")
 
 # ══════════════════════════════════════════════
 # 유틸
@@ -678,18 +788,21 @@ with main_tabs[1]:
                     end_ep = min(chunk * 25, core_eps)
                     status.info(f"🔄 청크 {chunk}/{total_chunks} 생성 중... (EP{start_ep}~{end_ep})")
 
-                    raw = call_claude(
-                        build_core_arc_prompt(
-                            concept, core_eps,
-                            producer_note=st.session_state.producer_note,
-                            chunk=chunk, total_chunks=total_chunks,
-                            prev_summary=prev_summary,
-                        ),
-                        MAX_TOKENS_ARC,
-                    )
+                    with st.spinner(f"청크 {chunk}/{total_chunks} (EP{start_ep}~{end_ep}) Claude API 호출 중... (1~2분 소요)"):
+                        raw = call_claude(
+                            build_core_arc_prompt(
+                                concept, core_eps,
+                                producer_note=st.session_state.producer_note,
+                                chunk=chunk, total_chunks=total_chunks,
+                                prev_summary=prev_summary,
+                            ),
+                            MAX_TOKENS_ARC,
+                        )
                     result = safe_json(raw)
                     if not result:
                         st.error(f"청크 {chunk} 생성 실패.")
+                        with st.expander(f"🔍 디버깅 — 청크 {chunk} LLM 응답 원본"):
+                            st.code(raw[:3000] if raw else "응답 없음", language="json")
                         break
 
                     all_blocks.extend(result.get("blocks", []))
@@ -782,67 +895,212 @@ with main_tabs[1]:
                 st.info("Core Arc를 먼저 생성하세요.")
             else:
                 all_eps = get_all_episodes(st.session_state.core_arc)
-                ep_select = st.number_input(
-                    "회차 번호",
-                    min_value=1,
-                    max_value=len(all_eps),
-                    value=1,
-                    key="plot_ep_num",
+                total_plot_eps = len(all_eps)
+
+                plot_mode = st.radio(
+                    "플롯 생성 방식",
+                    ["🚀 전체 일괄 생성", "📋 개별 회차 생성/재생성"],
+                    horizontal=True,
+                    key="plot_mode_radio",
                 )
 
-                if st.button(f"📋 EP{ep_select} 플롯 설계", type="primary"):
-                    target_block = None
-                    for block in st.session_state.core_arc:
-                        for ep in block.get("episodes", []):
-                            if ep.get("ep") == ep_select:
-                                target_block = block
-                                break
-                    block_text = json.dumps(target_block, ensure_ascii=False) if target_block else ""
-                    plant_rel = get_relevant_plants(st.session_state.plant_map_core, ep_select)
-                    prev_sum = get_prev_summary(ep_select)
-
-                    with st.spinner(f"EP{ep_select} 플롯 설계 중..."):
-                        raw = call_claude(
-                            build_episode_plot_prompt(
-                                block_text, plant_rel, ep_select, prev_sum,
-                                st.session_state.producer_note,
-                            ),
-                            MAX_TOKENS_STRUCTURE,
-                        )
-                    result = safe_json(raw)
-                    if result:
-                        st.session_state.episode_plots[ep_select] = result
-                        st.success(f"✅ EP{ep_select} 플롯 완료")
-
-                if ep_select in st.session_state.episode_plots:
-                    plot = st.session_state.episode_plots[ep_select]
-                    title_type = plot.get("title_type", "")
-                    title_badge = f' <span class="seq">{title_type}</span>' if title_type else ""
+                # ── 모드 A: 전체 일괄 생성 ──
+                if plot_mode == "🚀 전체 일괄 생성":
+                    done_count = len(st.session_state.episode_plots)
                     st.markdown(
-                        f"### EP{ep_select}. {plot.get('title','')}{title_badge}",
-                        unsafe_allow_html=True,
+                        f"**Core Arc {total_plot_eps}회차** · "
+                        f"현재 완료: {done_count}/{total_plot_eps}회차"
                     )
-                    opening = plot.get("opening", {})
-                    dev = plot.get("development", {})
-                    cliff = plot.get("cliffhanger", {})
 
-                    st.markdown("**도입**")
-                    st.markdown(f"- 첫 문장: {opening.get('hook_line','')}")
-                    st.markdown(f"- 리캡 방식: {opening.get('recap_method','')}")
-                    st.markdown(f"- 독자 질문: {opening.get('question','')}")
-
-                    st.markdown("**전개**")
-                    for scene in dev.get("scenes", []):
-                        st.markdown(
-                            f"  씬 {scene.get('scene_no','')}: "
-                            f"{scene.get('location','')} — {scene.get('conflict','')} → "
-                            f"{scene.get('outcome','')}"
+                    col_bat1, col_bat2 = st.columns([2, 1])
+                    with col_bat1:
+                        skip_existing = st.checkbox(
+                            "이미 생성된 회차는 건너뛰기",
+                            value=True,
+                            key="skip_done_plots",
                         )
-                    st.markdown(f"- 감정 곡선: {dev.get('emotion_arc','')}")
+                    with col_bat2:
+                        pass
 
-                    st.markdown("**클리프행어**")
-                    st.markdown(f"- 유형: {cliff.get('type','')}")
-                    st.markdown(f"- 내용: {cliff.get('content','')}")
+                    if st.button(
+                        f"🚀 {total_plot_eps}회차 플롯 일괄 생성",
+                        type="primary",
+                        key="batch_plot_btn",
+                    ):
+                        progress_plot = st.progress(0)
+                        status_plot = st.empty()
+                        fail_count = 0
+
+                        for idx, ep_data in enumerate(all_eps, 1):
+                            ep_num = ep_data.get("ep", idx)
+
+                            # 이미 생성된 회차 건너뛰기
+                            if skip_existing and ep_num in st.session_state.episode_plots:
+                                progress_plot.progress(idx / total_plot_eps)
+                                continue
+
+                            status_plot.info(f"📋 EP{ep_num} 플롯 설계 중... ({idx}/{total_plot_eps})")
+
+                            target_block = None
+                            for block in st.session_state.core_arc:
+                                for ep in block.get("episodes", []):
+                                    if ep.get("ep") == ep_num:
+                                        target_block = block
+                                        break
+                            block_text = json.dumps(target_block, ensure_ascii=False) if target_block else ""
+                            plant_rel = get_relevant_plants(st.session_state.plant_map_core, ep_num)
+                            prev_sum = get_prev_summary(ep_num)
+
+                            with st.spinner(f"EP{ep_num} 플롯 설계 중..."):
+                                raw = call_claude(
+                                    build_episode_plot_prompt(
+                                        block_text, plant_rel, ep_num, prev_sum,
+                                        st.session_state.producer_note,
+                                    ),
+                                    MAX_TOKENS_STRUCTURE,
+                                )
+                            result = safe_json(raw)
+                            if result:
+                                st.session_state.episode_plots[ep_num] = result
+                            else:
+                                fail_count += 1
+
+                            progress_plot.progress(idx / total_plot_eps)
+
+                        final_done = len(st.session_state.episode_plots)
+                        if fail_count == 0:
+                            status_plot.success(
+                                f"✅ 플롯 일괄 생성 완료 — {final_done}/{total_plot_eps}회차"
+                            )
+                        else:
+                            status_plot.warning(
+                                f"⚠️ 완료: {final_done}/{total_plot_eps} · 실패: {fail_count}회차 "
+                                "(개별 재생성 탭에서 실패한 회차만 다시 시도하세요)"
+                            )
+
+                    # ── 플롯 일괄 다운로드 ──
+                    if st.session_state.episode_plots:
+                        st.divider()
+                        st.markdown("**📦 전체 플롯 다운로드**")
+                        col_dl_p1, col_dl_p2 = st.columns(2)
+                        with col_dl_p1:
+                            plots_json = json.dumps(
+                                {str(k): v for k, v in sorted(st.session_state.episode_plots.items())},
+                                ensure_ascii=False,
+                                indent=2,
+                            )
+                            st.download_button(
+                                "⬇️ 전체 플롯 JSON",
+                                data=plots_json.encode("utf-8"),
+                                file_name=f"{concept.get('title','wn')}_플롯_전체_{datetime.now().strftime('%Y%m%d')}.json",
+                                mime="application/json",
+                                key="dl_all_plots_json",
+                            )
+                        with col_dl_p2:
+                            # DOCX: 플롯 리스트를 컨셉 카드 기획서에 추가
+                            plot_lines = []
+                            for ep_num in sorted(st.session_state.episode_plots.keys()):
+                                p = st.session_state.episode_plots[ep_num]
+                                plot_lines.append(f"EP{ep_num:03d}. {p.get('title', '')}")
+                                plot_lines.append(f"  유형: {p.get('title_type', '')}")
+                                cliff = p.get("cliffhanger", {})
+                                plot_lines.append(f"  클리프행어: [{cliff.get('type','')}] {cliff.get('content','')}")
+                                plot_lines.append("")
+                            plots_txt = "\n".join(plot_lines)
+                            st.download_button(
+                                "⬇️ 플롯 요약 TXT",
+                                data=plots_txt.encode("utf-8"),
+                                file_name=f"{concept.get('title','wn')}_플롯_요약_{datetime.now().strftime('%Y%m%d')}.txt",
+                                mime="text/plain",
+                                key="dl_all_plots_txt",
+                            )
+
+                    # ── 생성된 플롯 리스트 미리보기 ──
+                    if st.session_state.episode_plots:
+                        st.divider()
+                        st.markdown(f"**📋 생성된 플롯 ({len(st.session_state.episode_plots)}/{total_plot_eps}회차)**")
+                        for ep_num in sorted(st.session_state.episode_plots.keys()):
+                            p = st.session_state.episode_plots[ep_num]
+                            title_t = p.get("title_type", "")
+                            cliff_t = p.get("cliffhanger", {}).get("type", "")
+                            st.markdown(
+                                f'<span class="seq">EP{ep_num}</span> '
+                                f'**{p.get("title", "")}** '
+                                f'<span class="seq">{title_t}</span> '
+                                f'[{cliff_t}]',
+                                unsafe_allow_html=True,
+                            )
+
+                # ── 모드 B: 개별 회차 생성/재생성 ──
+                else:
+                    ep_select = st.number_input(
+                        "회차 번호",
+                        min_value=1,
+                        max_value=total_plot_eps,
+                        value=1,
+                        key="plot_ep_num",
+                    )
+
+                    exists = ep_select in st.session_state.episode_plots
+                    btn_label = f"🔄 EP{ep_select} 재생성" if exists else f"📋 EP{ep_select} 플롯 설계"
+
+                    if st.button(btn_label, type="primary"):
+                        target_block = None
+                        for block in st.session_state.core_arc:
+                            for ep in block.get("episodes", []):
+                                if ep.get("ep") == ep_select:
+                                    target_block = block
+                                    break
+                        block_text = json.dumps(target_block, ensure_ascii=False) if target_block else ""
+                        plant_rel = get_relevant_plants(st.session_state.plant_map_core, ep_select)
+                        prev_sum = get_prev_summary(ep_select)
+
+                        with st.spinner(f"EP{ep_select} 플롯 설계 중..."):
+                            raw = call_claude(
+                                build_episode_plot_prompt(
+                                    block_text, plant_rel, ep_select, prev_sum,
+                                    st.session_state.producer_note,
+                                ),
+                                MAX_TOKENS_STRUCTURE,
+                            )
+                        result = safe_json(raw)
+                        if result:
+                            st.session_state.episode_plots[ep_select] = result
+                            st.success(f"✅ EP{ep_select} 플롯 완료")
+                        else:
+                            st.error(f"EP{ep_select} 플롯 생성 실패.")
+                            with st.expander(f"🔍 디버깅 — EP{ep_select} 응답 원본"):
+                                st.code(raw[:3000] if raw else "응답 없음", language="json")
+
+                    if ep_select in st.session_state.episode_plots:
+                        plot = st.session_state.episode_plots[ep_select]
+                        title_type = plot.get("title_type", "")
+                        title_badge = f' <span class="seq">{title_type}</span>' if title_type else ""
+                        st.markdown(
+                            f"### EP{ep_select}. {plot.get('title','')}{title_badge}",
+                            unsafe_allow_html=True,
+                        )
+                        opening = plot.get("opening", {})
+                        dev = plot.get("development", {})
+                        cliff = plot.get("cliffhanger", {})
+
+                        st.markdown("**도입**")
+                        st.markdown(f"- 첫 문장: {opening.get('hook_line','')}")
+                        st.markdown(f"- 리캡 방식: {opening.get('recap_method','')}")
+                        st.markdown(f"- 독자 질문: {opening.get('question','')}")
+
+                        st.markdown("**전개**")
+                        for scene in dev.get("scenes", []):
+                            st.markdown(
+                                f"  씬 {scene.get('scene_no','')}: "
+                                f"{scene.get('location','')} — {scene.get('conflict','')} → "
+                                f"{scene.get('outcome','')}"
+                            )
+                        st.markdown(f"- 감정 곡선: {dev.get('emotion_arc','')}")
+
+                        st.markdown("**클리프행어**")
+                        st.markdown(f"- 유형: {cliff.get('type','')}")
+                        st.markdown(f"- 내용: {cliff.get('content','')}")
 
         # ── 2-5 Extension ──
         with sub_tabs_2[4]:
@@ -907,20 +1165,23 @@ with main_tabs[1]:
                         end_ep = core_eps + min(chunk * 25, ext_eps)
                         status.info(f"🔄 Extension 청크 {chunk}/{total_ext_chunks} (EP{start_ep}~{end_ep})")
 
-                        raw = call_claude(
-                            build_extension_arc_prompt(
-                                concept, core_arc_text, current_ep, ext_eps,
-                                mode=ext_mode,
-                                reader_feedback=reader_feedback,
-                                producer_note=st.session_state.producer_note,
-                                chunk=chunk, total_chunks=total_ext_chunks,
-                                prev_summary=prev_summary,
-                            ),
-                            MAX_TOKENS_ARC,
-                        )
+                        with st.spinner(f"Extension 청크 {chunk}/{total_ext_chunks} (EP{start_ep}~{end_ep}) 생성 중... (1~2분 소요)"):
+                            raw = call_claude(
+                                build_extension_arc_prompt(
+                                    concept, core_arc_text, current_ep, ext_eps,
+                                    mode=ext_mode,
+                                    reader_feedback=reader_feedback,
+                                    producer_note=st.session_state.producer_note,
+                                    chunk=chunk, total_chunks=total_ext_chunks,
+                                    prev_summary=prev_summary,
+                                ),
+                                MAX_TOKENS_ARC,
+                            )
                         result = safe_json(raw)
                         if not result:
                             st.error(f"청크 {chunk} 실패.")
+                            with st.expander(f"🔍 디버깅 — Extension 청크 {chunk} 응답 원본"):
+                                st.code(raw[:3000] if raw else "응답 없음", language="json")
                             break
 
                         all_ext_blocks.extend(result.get("blocks", []))
@@ -1359,7 +1620,7 @@ with main_tabs[2]:
 st.markdown("---")
 st.markdown(
     '<p style="text-align:center;font-family:var(--body);font-size:0.7rem;color:var(--dim);">'
-    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.0'
+    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.1'
     '</p>',
     unsafe_allow_html=True,
 )
