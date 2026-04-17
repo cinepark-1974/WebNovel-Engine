@@ -497,10 +497,13 @@ with main_tabs[0]:
             romance_q = st.text_input("시즌 질문 — 로맨스 축", value=sq.get("romance", ""))
             mystery_q = st.text_input("시즌 질문 — 미스터리 축", value=sq.get("mystery", ""))
 
+        valid_tags = list(WEB_NOVEL_FORMULAS.keys())
+        raw_tags = card.get("formula_tags", [])
+        safe_default_tags = [t for t in raw_tags if t in valid_tags]
         tags = st.multiselect(
             "웹소설 공식 태그",
-            list(WEB_NOVEL_FORMULAS.keys()),
-            default=card.get("formula_tags", []),
+            valid_tags,
+            default=safe_default_tags,
         )
 
         if st.button("✅ 직접 입력 컨셉 카드 저장", key="save_direct"):
