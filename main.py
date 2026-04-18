@@ -990,10 +990,104 @@ with main_tabs[1]:
                     st.success("✅ 캐릭터 바이블 완성")
                 else:
                     st.error("생성 실패.")
+                    with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                        st.code(raw[:3000] if raw else "응답 없음", language="json")
 
             cb = st.session_state.character_bible
             if cb:
-                st.json(cb)
+                # ── 다운로드 + Raw JSON 토글 ──
+                col_cb1, col_cb2 = st.columns([3, 1])
+                with col_cb1:
+                    st.caption("아래는 생성된 캐릭터 바이블 요약입니다. Raw JSON은 '원본 JSON 보기'에서.")
+                with col_cb2:
+                    cb_json_str = json.dumps(cb, ensure_ascii=False, indent=2)
+                    st.download_button(
+                        "⬇️ JSON",
+                        data=cb_json_str.encode("utf-8"),
+                        file_name=f"{concept.get('title','wn')}_character_bible.json",
+                        mime="application/json",
+                        key="dl_cb_json",
+                    )
+
+                # ── 카드 형태로 렌더링 ──
+                def _render_character(char, role_label, badge_class="seq"):
+                    """개별 캐릭터를 카드로 렌더링."""
+                    if not isinstance(char, dict):
+                        return
+                    name = char.get("name", "(이름 없음)")
+                    age = char.get("age", "")
+                    occupation = char.get("occupation", "")
+                    appearance = char.get("appearance", "")
+
+                    header = f"**{name}**"
+                    if age:
+                        header += f" · {age}세"
+                    if occupation:
+                        header += f" · {occupation}"
+
+                    st.markdown(
+                        f'<span class="{badge_class}">{role_label}</span> {header}',
+                        unsafe_allow_html=True,
+                    )
+                    if appearance:
+                        st.caption(f"🎭 {appearance}")
+
+                    # 말투 패턴
+                    speech = char.get("speech_patterns", [])
+                    if speech:
+                        with st.expander(f"💬 말투 패턴 ({len(speech)}개)"):
+                            for s in speech:
+                                st.markdown(f'- "{s}"')
+
+                    # 주요 필드를 2열로
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        bp = char.get("behavioral_patterns", "")
+                        if bp:
+                            st.markdown("**행동 패턴**")
+                            st.markdown(f"_{bp}_")
+                        sw = char.get("secret_wound", "")
+                        if sw:
+                            st.markdown("**상처/비밀**")
+                            st.markdown(f"_{sw}_")
+                    with col_b:
+                        dg = char.get("desire_goal", "")
+                        if dg:
+                            st.markdown("**욕망/목표**")
+                            st.markdown(f"_{dg}_")
+                        ca = char.get("character_arc", "")
+                        if ca:
+                            st.markdown("**캐릭터 아크**")
+                            st.markdown(f"_{ca}_")
+                    st.divider()
+
+                # 주인공
+                if cb.get("protagonist"):
+                    st.markdown("### 🎯 주인공")
+                    _render_character(cb["protagonist"], "PROTAGONIST")
+
+                # 상대역(들)
+                love_interests = cb.get("love_interests", [])
+                if love_interests:
+                    st.markdown(f"### 💕 상대역 ({len(love_interests)}명)")
+                    for i, li in enumerate(love_interests, 1):
+                        _render_character(li, f"LI #{i}")
+
+                # 빌런
+                if cb.get("villain"):
+                    st.markdown("### ⚔️ 빌런")
+                    _render_character(cb["villain"], "VILLAIN")
+
+                # 조연
+                supporting = cb.get("supporting", [])
+                if supporting:
+                    st.markdown(f"### 🎭 조연 ({len(supporting)}명)")
+                    for i, sup in enumerate(supporting, 1):
+                        _render_character(sup, f"조연 #{i}")
+
+                # Raw JSON은 접어두기
+                with st.expander("📄 원본 JSON 보기 (개발자용)"):
+                    st.json(cb)
 
         # ── 2-4 회차 플롯 ──
         with sub_tabs_2[3]:
