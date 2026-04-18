@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.0 — prompt.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.2 — prompt.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 © 2026 BLUE JEANS PICTURES
@@ -169,6 +169,58 @@ WEB_NOVEL_FORMULAS = {
             "무시받던 자의 진짜 정체 드러남",
         ],
     },
+    "시스템물": {
+        "description": "상태창/스탯/퀘스트/수치화된 성장으로 서사를 추동하는 구조 — 이선영(2026) 연구 기반",
+        "must_have": [
+            "죽음/파멸 위협 퀘스트 ('~하지 않으면 죽는다' 같은 강제 목표)",
+            "상태창/스탯/레벨 시각화 (회차 중 1~2회 스탯 공개)",
+            "특성/칭호 아이템 시스템",
+            "상태이상 효과 (정신적 결핍을 !상태이상으로 가시화)",
+            "시스템의 정체/한계/이면 폭로 (중반 이후)",
+            "시스템의 반동인물화 (후반 — 조력자에서 적대자로 전환)",
+        ],
+        "hook_patterns": [
+            "스탯 폭등 (무시받던 주인공이 수치로 증명)",
+            "새 퀘스트 부여 (예상 밖의 과제)",
+            "상태창에 숨겨진 메시지 발견",
+            "시스템의 악의 드러남",
+            "특성 아이템 획득으로 국면 역전",
+        ],
+    },
+    "육아물": {
+        "description": "아버지-자녀 중심 가족 서사. 로맨스보다 가족 유대가 압도적 비중 — 박자희(2024) 연구 기반",
+        "must_have": [
+            "부성애/모성애의 구체적 행동화 (말이 아닌 행동)",
+            "자녀의 사랑스러운 일상 장면 (읽는 이가 대리만족)",
+            "강한 아버지/어머니 캐릭터 (절대적 보호자)",
+            "가족 단위 위기와 극복",
+            "로맨스는 보조 축 (주인공-로맨스 대상 관계보다 가족 관계 우선)",
+        ],
+        "hook_patterns": [
+            "자녀의 위기 → 부모의 각성",
+            "자녀의 사랑스러운 말/행동",
+            "가족 비밀의 폭로",
+            "이전 가족의 재등장",
+            "새로운 가족 구성원 합류",
+        ],
+    },
+    "반동인물 주인공": {
+        "description": "도덕적으로 완벽하지 않고 실리를 따지는 주인공 — 박자희(2024) 독자 욕구 연구 기반",
+        "must_have": [
+            "주인공이 폭력/기만/계략을 도구로 사용 (목적은 선)",
+            "기존 선인(善人) 캐릭터의 위선 드러내기",
+            "주인공의 과거 트라우마 또는 정당화 사유",
+            "선량하기만 한 주인공이 받던 부당한 대우 역전",
+            "주인공의 선택이 독자에게는 '정당방위'로 읽힘",
+        ],
+        "hook_patterns": [
+            "위선자의 가면이 벗겨지는 순간",
+            "주인공이 '착한 척' 그만두는 순간",
+            "과거 가해자에게 복수의 칼끝이 향하는 장면",
+            "'억울하지 않냐'는 질문을 받고 눈물 터지는 장면",
+            "주인공의 진짜 계획이 드러나는 반전",
+        ],
+    },
 }
 
 def get_formula_block(tags):
@@ -186,6 +238,57 @@ def get_formula_block(tags):
             lines.append("  훅 패턴:")
             for h in f["hook_patterns"]:
                 lines.append(f"    · {h}")
+    return "\n".join(lines)
+
+# =================================================================
+# [2-2] 서사 모티프 이중 구조 — 고경은(2022) 연구 기반
+# =================================================================
+# 1차 모티프: 주인공의 시공간 이동
+# 2차 모티프: 1차 위에 결합되는 '~물' 소재
+NARRATIVE_MOTIFS = {
+    "primary": {
+        "회귀": "주인공이 과거 시점으로 돌아가 삶을 다시 시작",
+        "빙의": "주인공이 소설/만화/다른 인물의 몸으로 영혼 이동",
+        "환생": "죽음 후 다른 존재로 재생, 전생 기억 보유",
+        "귀환": "이세계 또는 먼 곳에서 원래 세계로 돌아옴",
+        "차원이동": "현실에서 이세계/게임/과거로 공간 이동",
+        "일상": "이동 없음 — 현재 현실 기반",
+    },
+    "secondary": {
+        "성장물": "주인공의 능력·지위·자아 성장이 주 서사축",
+        "먼치킨물": "압도적 능력자 주인공이 모든 장애를 돌파",
+        "사이다물": "억울함 → 반격 → 통쾌의 반복 리듬",
+        "시한부물": "정해진 기한 내 목표 달성 압박",
+        "책빙의물": "원작 소설/만화 속으로 빙의, 원작 지식 활용",
+        "육아물": "아버지-자녀 중심 가족 서사",
+        "법정물": "재판·소송 중심의 사건 해결",
+        "학원물": "학교/학원 배경의 성장·경쟁 서사",
+        "아이돌물": "아이돌/연예계 배경, 시스템물과 자주 결합",
+        "전문직물": "의사/검사/변호사 등 직업 전문성 중심",
+        "연예계물": "배우/매니저/PD 등 연예 산업 무대",
+        "헌터물": "각성/던전/몬스터 시스템 기반 현대판타지",
+    },
+}
+
+
+def get_motif_block(primary_motif="", secondary_motif=""):
+    """주인공 서사 모티프 구조를 프롬프트 블록으로."""
+    if not primary_motif and not secondary_motif:
+        return ""
+    lines = ["[서사 모티프 구조]"]
+    if primary_motif and primary_motif in NARRATIVE_MOTIFS["primary"]:
+        lines.append(
+            f"1차 모티프 (시공간 이동): ▶ {primary_motif} — "
+            f"{NARRATIVE_MOTIFS['primary'][primary_motif]}"
+        )
+    if secondary_motif and secondary_motif in NARRATIVE_MOTIFS["secondary"]:
+        lines.append(
+            f"2차 모티프 (소재 결합): ▶ {secondary_motif} — "
+            f"{NARRATIVE_MOTIFS['secondary'][secondary_motif]}"
+        )
+    lines.append("\n※ 1차 모티프는 독자에게 세계의 법칙과 주인공의 출발점을 빠르게 전달하는 장치.")
+    lines.append("※ 2차 모티프는 1차 위에서 구체적 사건 유형을 결정.")
+    lines.append("※ 회빙환(회귀+빙의+환생)은 반드시 '남들보다 앞선 출발선'을 만들어야 함.")
     return "\n".join(lines)
 
 # =================================================================
@@ -210,6 +313,13 @@ GENRE_RULES = {
             "남주가 이유 없이 폭력적",
             "세계관 설명이 2회차 이상 지속",
             "로맨스 없이 정치극만 3회차 이상",
+        ],
+        "reader_desires": [
+            "① 출발선 우위 — 회빙환 + 고귀한 신분으로 남들보다 앞선 시작점",
+            "② 가부장 안정 — 강한 남주의 보호 or 계약결혼 구조 (최근은 여주 주도형)",
+            "③ 공정한 평가 — 혈통/성별/나이 장벽을 능력으로 극복",
+            "④ 자아실현 — 여성이 아닌 한 인간으로의 사회적 성취",
+            "⑤ 실리적 주인공 — 착하기만 하지 않고 이익을 계산하는 여주",
         ],
     },
     "로맨스": {
@@ -259,6 +369,26 @@ GENRE_RULES = {
         "forbidden": [
             "설정 나열이 행동을 대체",
             "주인공이 너무 쉽게 이김 (긴장 없는 먼치킨)",
+        ],
+    },
+    "시스템물": {
+        "core_emotion": "생존 긴장 + 성장 쾌감 + 수치화된 성취 — 이선영(2026) 연구",
+        "must_have": [
+            "★ 죽음 위협 퀘스트 ('~하지 않으면 죽는다' 형식 — 예: 데뷔 못 하면 죽는 병)",
+            "상태창/스탯/레벨의 명시적 시각화",
+            "'특성' 아이템 (타고난 기질 vs 획득형 처세술 구분)",
+            "'!상태이상' 항목 (정신적 결핍의 가시화)",
+            "시스템의 이면/한계/반동인물화 (후반)",
+            "초점캐릭터와 시스템의 비밀 관계",
+        ],
+        "hook_rule": "매 회차 끝에 스탯 변화, 새 퀘스트, 또는 시스템 메시지",
+        "punch_rule": "5회차 내 1회 이상 수치적 성장이 가시화되는 장면 (B→A, A→S 승급 등)",
+        "setpiece": "첫 각성, 레벨업 알림, 신규 특성 획득, 상태이상 해제 실패, 시스템 오류, 랭커 대결, 시스템의 진짜 모습 폭로",
+        "forbidden": [
+            "스탯 변화 없이 회차 진행",
+            "시스템 규칙의 모호함 (독자가 예측 불가능)",
+            "죽음 위협의 반복 지연 (실제 긴장감 없이 협박만)",
+            "상태창을 설명문으로 대체",
         ],
     },
     "판타지": {
@@ -387,6 +517,11 @@ def get_genre_rules_block(genre_key):
     lines.append("금지 사항:")
     for f in rules["forbidden"]:
         lines.append(f"  - {f}")
+    # 독자 욕구 체크리스트 (로판 등 일부 장르)
+    if "reader_desires" in rules:
+        lines.append("독자 욕구 충족 체크리스트 (1개 이상 반영):")
+        for d in rules["reader_desires"]:
+            lines.append(f"  {d}")
     return "\n".join(lines)
 
 # =================================================================
@@ -413,16 +548,46 @@ CLIFFHANGER_RULES = """[클리프행어 7유형]
 # =================================================================
 # [5] RATING RULES
 # =================================================================
-RATING_19 = """[19금 수위 규칙 — 리디 성인관]
-허용: 직접적 성행위 묘사, 신체 부위 직접 명명, 관능적 감각 묘사 (촉각/체온/호흡/땀/맥박)
+RATING_19 = """[19금 수위 규칙 — 리디 성인관/카카오페이지 성인관]
+허용: 직접적 성행위 묘사, 신체 부위 직접 명명(여성/남성), 관능적 감각 묘사 (촉각/체온/호흡/땀/맥박)
 금지: 감정 없는 성묘사(포르노그래피), 폭력적/비합의적 성행위 미화, 플롯과 무관한 삽입
 
-관능 씬 작법:
-1. 정사 전: 심리적 긴장이 먼저 쌓인다
-2. 정사 중: 감각을 교차한다 (촉각→시각→청각→체온→호흡)
-3. 정사 후: 관계가 달라져야 한다
-4. 대사: 짧고 끊어진다
-5. 시점: 주인공의 감각에 밀착한다
+[19금 서사 구조 — 민선(2023) 섹슈얼리티 연구 기반]
+
+★ 선섹스 후연애 구조 (19금 로맨스 핵심 공식)
+   타인  →  先 섹스  →  後 감정  →  연인
+   - 감정적 친밀도보다 몸의 접촉이 먼저
+   - 성적 긴장감이 감정선을 견인
+   - 계약결혼/하룻밤 상대/강요된 동거 등이 자주 사용되는 셋업
+
+★ 서술 시점 원칙
+   - 관능 씬의 신체 반응과 감정 변화는 여자 주인공 시점
+   - 남주의 외적 행동/반응은 여주 시점에서 '관찰'
+   - 남주 시점은 선언적 고백(집착/사랑)에만 제한적 사용
+   - 이중 시점을 쓰면 독자 몰입 약화
+
+★ 관능 씬의 4대 서사 기능 (반드시 1개 이상 포함)
+   1. 성적 만족 제공 — 남주가 여주에게 미지의 쾌감을 가르침
+   2. 부성 권위 대체 — 결핍된 아버지의 자리를 남주가 대체
+   3. 경제적/사회적 안정 상징 — 남주의 소유 선언
+   4. 정서적 성장 보조 — 여주의 자존감 회복
+
+★ 남성 성기 묘사 (2011년 이후 허용)
+   - 시각 + 촉각 + 체온 + 크기/단단함 다감각 서술
+   - 단, 포르노그래피식 기계적 반복 금지
+   - 여주의 신체 반응과 연결해서 묘사
+
+★ 금기와 위반의 긴장 장치
+   - 결혼·임신·육아가 '금기'가 아닌 '긴장 유발 장치'
+   - 아버지(폭력적/결핍된) → 남주(대체자)로의 이동
+   - 귀족/평민, 상사/부하 등 권력 비대칭을 성적 긴장으로 전환
+
+[관능 씬 작법]
+1. 정사 전: 심리적 긴장 + 신체 거리 축소 (시선 → 손끝 → 숨결)
+2. 정사 중: 감각 교차 (촉각→시각→청각→체온→호흡)
+3. 정사 후: 관계 변화 (호칭 · 의존도 · 자존감)
+4. 대사: 짧고 끊어진다. 남주는 선언형, 여주는 의문형/단편
+5. 시점: 여주 감각에 밀착. 남주는 외부에서 관찰
 """.strip()
 
 RATING_15 = """[15금 수위 규칙 — 카카오페이지/네이버시리즈]
@@ -742,6 +907,8 @@ def _rating_block(rating):
 
 def build_parse_brief_prompt(brief_text):
     """기획서 텍스트를 컨셉 카드 JSON으로 파싱."""
+    primary_list = list(NARRATIVE_MOTIFS["primary"].keys())
+    secondary_list = list(NARRATIVE_MOTIFS["secondary"].keys())
     return f"""다음은 웹소설/드라마 기획서 텍스트입니다. 이 내용을 웹소설 컨셉 카드 JSON으로 변환하세요.
 
 [기획서 원문]
@@ -752,6 +919,11 @@ def build_parse_brief_prompt(brief_text):
 - 주인공/상대역/빌런이 구분되지 않으면 관계 구도로 판단.
 - 상대역은 최대 5명까지 배열로.
 - 빌런이 명시되지 않으면 villain.name = "" 로 남김 (자동 보강 대상).
+- 서사 모티프 자동 판별:
+  · primary_motif 선택지: {primary_list}
+  · secondary_motif 선택지: {secondary_list}
+  · 없으면 "일상" / "" 로 표기
+- 주인공 성격이 실리적이거나 반동인물적이면 is_antihero=true
 
 [JSON 출력 — 이 구조를 정확히 따를 것]
 {{
@@ -759,9 +931,12 @@ def build_parse_brief_prompt(brief_text):
   "genre": "장르",
   "logline": "로그라인",
   "formula_tags": ["환생","역하렘","치정" 등 해당되는 태그만],
+  "primary_motif": "회귀|빙의|환생|귀환|차원이동|일상 중 하나",
+  "secondary_motif": "성장물|먼치킨물|사이다물|시한부물|책빙의물|육아물|법정물|학원물|아이돌물|전문직물|연예계물|헌터물 중 하나 (없으면 빈 문자열)",
   "protagonist": {{
     "name": "", "age": 0, "role": "직업/지위",
-    "goal": "원하는 것", "need": "필요한 것", "fatal_flaw": "치명적 결함"
+    "goal": "원하는 것", "need": "필요한 것", "fatal_flaw": "치명적 결함",
+    "is_antihero": false
   }},
   "love_interests": [
     {{"name": "", "role": "", "appeal": "매력 포인트", "conflict": "관계의 갈등 요소"}}
@@ -779,6 +954,8 @@ def build_parse_brief_prompt(brief_text):
 def build_generate_concept_prompt(idea_text, genre=""):
     """한 줄 아이디어에서 컨셉 카드 자동 생성."""
     g_block = f"\n[장르]\n{genre}" if genre else ""
+    primary_list = list(NARRATIVE_MOTIFS["primary"].keys())
+    secondary_list = list(NARRATIVE_MOTIFS["secondary"].keys())
     return f"""다음 아이디어를 기반으로 웹소설 컨셉 카드를 생성하세요.
 
 [아이디어]
@@ -791,14 +968,19 @@ def build_generate_concept_prompt(idea_text, genre=""):
 - 빌런 설정 (Villain 4Q 완비)
 - 로맨스 축 + 미스터리 축 이원 시즌 질문
 - 해당되는 웹소설 공식 태그 2~3개 부여
+- 서사 모티프 판별:
+  · primary_motif: {primary_list} 중 하나
+  · secondary_motif: {secondary_list} 중 하나 (없으면 빈 문자열)
+- 주인공이 실리적/반동인물적 성향이면 is_antihero=true
 - 시놉시스 3~5문장
 
 [JSON 출력]
-(build_parse_brief_prompt와 동일한 스키마)
 {{
   "title": "", "genre": "", "logline": "",
   "formula_tags": [],
-  "protagonist": {{"name":"","age":0,"role":"","goal":"","need":"","fatal_flaw":""}},
+  "primary_motif": "",
+  "secondary_motif": "",
+  "protagonist": {{"name":"","age":0,"role":"","goal":"","need":"","fatal_flaw":"","is_antihero":false}},
   "love_interests": [
     {{"name":"","role":"","appeal":"","conflict":""}}
   ],
@@ -1088,9 +1270,11 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
                                genre, rating, prev_3_episodes,
                                plant_map_relevant, formula_tags=None,
                                producer_note="", style_strength="중",
-                               target_length=5200, platform="카카오페이지"):
-    """회차 원고 집필 — 플랫폼별 분량 자동 적용."""
+                               target_length=5200, platform="카카오페이지",
+                               primary_motif="", secondary_motif=""):
+    """회차 원고 집필 — 플랫폼별 분량 자동 적용 + 서사 모티프 구조 반영."""
     tags_block = get_formula_block(formula_tags or [])
+    motif_block = get_motif_block(primary_motif, secondary_motif)
     lp = get_platform_length(platform)
     min_len = lp["min"]
     max_len = lp["max"]
@@ -1101,6 +1285,8 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
 {_genre_block(genre)}
 
 {tags_block}
+
+{motif_block}
 
 {_rating_block(rating)}
 
