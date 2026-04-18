@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.2 — main.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.3 — main.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 © 2026 BLUE JEANS PICTURES
@@ -15,13 +15,14 @@ from datetime import datetime
 
 from prompt import (
     SYSTEM_PROMPT, GENRE_RULES, WEB_NOVEL_FORMULAS, CLIFFHANGER_TYPES,
-    PLATFORM_LENGTH, get_platform_length, NARRATIVE_MOTIFS,
+    PLATFORM_LENGTH, get_platform_length, NARRATIVE_MOTIFS, READER_PERSONAS,
     build_parse_brief_prompt, build_generate_concept_prompt, build_augment_concept_prompt,
     build_core_arc_prompt, build_extension_arc_prompt,
     build_plant_payoff_prompt, build_character_bible_prompt,
     build_episode_plot_prompt, build_episode_write_prompt,
     build_rating_convert_prompt, build_alternative_scene_prompt,
     build_quality_check_prompt, build_episode_summary_prompt,
+    build_reader_simulation_prompt,
 )
 from parser import parse_brief
 from docx_builder import (
@@ -496,12 +497,15 @@ def render_concept_card(card):
         # 서사 모티프 표시
         pm = card.get("primary_motif", "")
         sm = card.get("secondary_motif", "")
-        if pm or sm:
+        tp = card.get("target_persona", "")
+        if pm or sm or tp:
             motif_bits = []
             if pm:
                 motif_bits.append(f'<span class="seq">1차: {pm}</span>')
             if sm:
                 motif_bits.append(f'<span class="seq">2차: {sm}</span>')
+            if tp:
+                motif_bits.append(f'<span class="seq">🎯 {tp}</span>')
             st.markdown(" ".join(motif_bits), unsafe_allow_html=True)
 
         col1, col2 = st.columns(2)
@@ -709,6 +713,26 @@ with main_tabs[0]:
                 key="direct_secondary_motif",
             )
 
+        # ── 타겟 독자 페르소나 (강종현 2024 + KOCCA 통계) ──
+        st.markdown("**타겟 독자 페르소나 (강종현 2024 수용자 연구)**")
+        persona_opts = [""] + list(READER_PERSONAS.keys())
+        cur_persona = card.get("target_persona", "")
+        pers_idx = persona_opts.index(cur_persona) if cur_persona in persona_opts else 0
+        target_persona = st.selectbox(
+            "타겟 독자층",
+            persona_opts,
+            index=pers_idx,
+            help="독자의 소비 동기·선호 훅·동일시 필요도가 집필 프롬프트에 자동 주입됨",
+            key="direct_target_persona",
+        )
+        if target_persona:
+            pdat = READER_PERSONAS[target_persona]
+            st.caption(
+                f"소비 동기: {pdat['motivation']} · "
+                f"선호 훅: {pdat['preferred_hooks']} · "
+                f"동일시: {pdat['identification']}"
+            )
+
         # ── 반동인물 주인공 체크 ──
         is_antihero = st.checkbox(
             "주인공이 반동인물적 성향 (실리적·계산적·도덕적으로 완벽하지 않음)",
@@ -717,16 +741,51 @@ with main_tabs[0]:
             key="direct_is_antihero",
         )
 
+        # ── 동일시 전략 (강종현 2024 기반) ──
+        with st.expander("🎭 주인공 동일시 전략 (독자 몰입 장치)"):
+            id_strategy = card.get("protagonist", {}).get("identification_strategy", {})
+            naming_opts = ["실명 사용", "일반명사 통일", "애칭 중심"]
+            cur_naming = id_strategy.get("naming_style", "실명 사용")
+            if cur_naming not in naming_opts:
+                cur_naming = "실명 사용"
+            naming_style = st.selectbox(
+                "호칭 처리 방식",
+                naming_opts,
+                index=naming_opts.index(cur_naming),
+                help="'일반명사 통일'은 여주를 '그녀'로만 부르는 방식 — 독자 자기 투영 강화 (로판 기법)",
+                key="direct_naming_style",
+            )
+            empathy_text = st.text_area(
+                "공감 포인트 (독자가 공감할 감정/상황, 콤마로 구분)",
+                value=", ".join(id_strategy.get("empathy_points", [])),
+                height=60,
+                placeholder="예: 직장 상사 스트레스, 가족 갈등, 외로움",
+                key="direct_empathy_points",
+            )
+            inner_monologue_style = st.text_input(
+                "내면 독백 스타일",
+                value=id_strategy.get("inner_monologue_style", ""),
+                placeholder="예: 냉소적 자기 관찰 / 체념적 짧은 사유",
+                key="direct_inner_style",
+            )
+
         if st.button("✅ 직접 입력 컨셉 카드 저장", key="save_direct"):
+            empathy_list = [x.strip() for x in empathy_text.split(",") if x.strip()]
             st.session_state.concept_card = {
                 "title": title, "genre": genre, "logline": logline,
                 "formula_tags": tags,
                 "primary_motif": primary_motif,
                 "secondary_motif": secondary_motif,
+                "target_persona": target_persona,
                 "protagonist": {
                     "name": p_name, "age": p.get("age", 0), "role": p.get("role", ""),
                     "goal": p_goal, "need": p_need, "fatal_flaw": p_flaw,
                     "is_antihero": is_antihero,
+                    "identification_strategy": {
+                        "naming_style": naming_style,
+                        "empathy_points": empathy_list,
+                        "inner_monologue_style": inner_monologue_style,
+                    },
                 },
                 "love_interests": card.get("love_interests", []),
                 "villain": card.get("villain", {}),
@@ -1280,7 +1339,8 @@ with main_tabs[2]:
             "3-1 19금 집필",
             "3-2 15금 변환",
             "3-3 품질 체크",
-            "3-4 내보내기",
+            "🔍 3-4 독자 시뮬레이터",
+            "3-5 내보내기",
         ])
 
         # 전체 에피소드 리스트 (Core + Extension)
@@ -1341,6 +1401,7 @@ with main_tabs[2]:
                                 platform=platform,
                                 primary_motif=concept.get("primary_motif", ""),
                                 secondary_motif=concept.get("secondary_motif", ""),
+                                target_persona=concept.get("target_persona", ""),
                             ),
                             MAX_TOKENS_EPISODE,
                         )
@@ -1491,8 +1552,143 @@ with main_tabs[2]:
                                 for i, imp in enumerate(improvements, 1):
                                     st.markdown(f"{i}. {imp}")
 
-        # ── 3-4 내보내기 ──
+        # ── 3-4 독자 시뮬레이터 (신규 — 강종현 2024 몰입 이론) ──
         with sub_tabs_3[3]:
+            sub_header("독자 시뮬레이터 — 몰입 경험 피드백")
+            st.caption(
+                "강종현(2024) 몰입(Flow) 이론 기반. "
+                "회차 원고를 실제 독자 페르소나 관점에서 읽고 몰입 진입/이탈/결제 의사를 시뮬레이션."
+            )
+
+            sim_written = sorted(set(
+                list(st.session_state.episodes_19.keys()) +
+                list(st.session_state.episodes_15.keys())
+            ))
+            if not sim_written:
+                st.info("집필된 회차가 없습니다. STEP 3-1에서 먼저 집필하세요.")
+            else:
+                col_sim1, col_sim2 = st.columns([1, 1])
+                with col_sim1:
+                    sim_ep = st.selectbox(
+                        "시뮬레이션할 회차",
+                        sim_written,
+                        key="sim_ep_select",
+                    )
+                with col_sim2:
+                    sim_rating = st.radio(
+                        "버전",
+                        ["19금", "15금"],
+                        horizontal=True,
+                        key="sim_rating_select",
+                    )
+
+                # 타겟 페르소나 선택 (컨셉 카드 기본값 + 수동 추가 선택 가능)
+                concept_persona = concept.get("target_persona", "")
+                st.markdown("**시뮬레이션할 독자 페르소나 (복수 선택 가능)**")
+                default_personas = [concept_persona] if concept_persona else []
+                sim_personas = st.multiselect(
+                    "독자층",
+                    list(READER_PERSONAS.keys()),
+                    default=default_personas,
+                    help="여러 페르소나를 선택하면 각각의 관점에서 피드백을 받습니다",
+                    key="sim_personas_select",
+                )
+
+                if st.button(
+                    f"🔍 EP{sim_ep} ({sim_rating}) 독자 시뮬레이션 실행",
+                    type="primary",
+                    key="run_sim_btn",
+                    disabled=not sim_personas,
+                ):
+                    text = (
+                        st.session_state.episodes_19.get(sim_ep, "")
+                        if sim_rating == "19금"
+                        else st.session_state.episodes_15.get(sim_ep, "")
+                    )
+                    if not text:
+                        st.error(f"EP{sim_ep} {sim_rating} 원고가 없습니다.")
+                    else:
+                        results_by_persona = {}
+                        for pers in sim_personas:
+                            with st.spinner(f"'{pers}' 독자 시뮬레이션 중..."):
+                                raw = call_claude(
+                                    build_reader_simulation_prompt(
+                                        text, pers, genre=concept.get("genre", "")
+                                    ),
+                                    MAX_TOKENS_ANALYSIS,
+                                )
+                            result = safe_json(raw)
+                            if result:
+                                results_by_persona[pers] = result
+                            else:
+                                results_by_persona[pers] = {"_error": True, "_raw": raw}
+
+                        st.session_state["last_sim_results"] = {
+                            "ep": sim_ep,
+                            "rating": sim_rating,
+                            "results": results_by_persona,
+                        }
+
+                # 결과 표시
+                last_sim = st.session_state.get("last_sim_results", {})
+                if last_sim and last_sim.get("ep") == sim_ep and last_sim.get("rating") == sim_rating:
+                    st.divider()
+                    for pers, result in last_sim.get("results", {}).items():
+                        st.markdown(f"### 🎯 {pers}")
+
+                        if result.get("_error"):
+                            st.error(f"{pers} 시뮬레이션 파싱 실패.")
+                            with st.expander("디버깅 — 원본 응답"):
+                                st.code(result.get("_raw", "")[:2000], language="json")
+                            continue
+
+                        # 총평
+                        score = result.get("flow_score", 0)
+                        color = "🟢" if score >= 8 else "🟡" if score >= 5 else "🔴"
+                        verdict = result.get("honest_verdict", "")
+                        st.markdown(f"{color} **몰입 점수: {score}/10** · _{verdict}_")
+
+                        # 몰입 진입
+                        flow_entry = result.get("flow_entry", {})
+                        entry_icon = "✅" if flow_entry.get("success") else "❌"
+                        st.markdown(
+                            f"**{entry_icon} 몰입 진입:** "
+                            f"{flow_entry.get('entry_point', '')} "
+                            f"(명확도 {flow_entry.get('clarity_score', 0)}/10)"
+                        )
+
+                        # 동일시
+                        ident = result.get("identification", {})
+                        ident_icon = "✅" if ident.get("works") else "❌"
+                        st.markdown(f"**{ident_icon} 동일시 작동:** {ident.get('evidence', '')}")
+
+                        # 결제 의사
+                        payment = result.get("payment_intent", {})
+                        pay_icon = "💰" if payment.get("next_episode") else "🚫"
+                        st.markdown(
+                            f"**{pay_icon} 다음 회차 결제 의사:** "
+                            f"{'Y' if payment.get('next_episode') else 'N'} — "
+                            f"{payment.get('reason', '')}"
+                        )
+
+                        # 이탈 지점
+                        dropouts = result.get("dropout_points", [])
+                        if dropouts:
+                            with st.expander(f"⚠️ 이탈 가능 지점 ({len(dropouts)}곳)"):
+                                for d in dropouts:
+                                    st.markdown(f"- **{d.get('location', '')}:** {d.get('reason', '')}")
+
+                        # 댓글 유발 포인트
+                        comments = result.get("comment_worthy", [])
+                        if comments:
+                            with st.expander(f"💬 댓글 유발 포인트 ({len(comments)}개)"):
+                                for c in comments:
+                                    st.markdown(f"- {c}")
+
+                        st.divider()
+
+        # ── 3-5 내보내기 ──
+        with sub_tabs_3[4]:
             sub_header("내보내기")
 
             eps_19 = st.session_state.episodes_19
@@ -1671,7 +1867,7 @@ with main_tabs[2]:
 st.markdown("---")
 st.markdown(
     '<p style="text-align:center;font-family:var(--body);font-size:0.7rem;color:var(--dim);">'
-    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.2'
+    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.3'
     '</p>',
     unsafe_allow_html=True,
 )
