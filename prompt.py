@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.2 — prompt.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.3 — prompt.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 © 2026 BLUE JEANS PICTURES
@@ -290,6 +290,160 @@ def get_motif_block(primary_motif="", secondary_motif=""):
     lines.append("※ 2차 모티프는 1차 위에서 구체적 사건 유형을 결정.")
     lines.append("※ 회빙환(회귀+빙의+환생)은 반드시 '남들보다 앞선 출발선'을 만들어야 함.")
     return "\n".join(lines)
+
+# =================================================================
+# [2-3] READER PERSONAS — 강종현(2024) 수용자 연구 + KOCCA 2020/2022 데이터
+# =================================================================
+# 타겟 독자층별 몰입 조건 프리셋
+READER_PERSONAS = {
+    "10대 여성": {
+        "consumption_time": "거의 매일 (57.6%)",
+        "motivation": "일탈, 감정 해소, 감수성 자극",
+        "preferred_genres": "로판 · BL · 학원물 · 판타지",
+        "preferred_hooks": "충격적 사건, 감수성 있는 묘사, 슬픈 아름다움, 아이돌/연예인",
+        "identification": "높음 — 여주 자기 투영 강하게 선호",
+        "payment": "기다무 의존적, 무료 중심, 극히 선택적 결제",
+        "tone_preference": "서정적·감성적 문체 수용 가능, 내면 묘사 풍부",
+    },
+    "20~30대 여성": {
+        "consumption_time": "출퇴근/자기 전 (일주일 3~4회)",
+        "motivation": "스트레스 해소, 감정 카타르시스, 대리만족",
+        "preferred_genres": "로판 · 로맨스 · 치정 · BL · 현판",
+        "preferred_hooks": "사이다, 권력 역전, 로맨스 긴장, 19금 관능",
+        "identification": "중간 — 대리만족 선호 (자기 투영보다 관찰)",
+        "payment": "연재 동시 결제 가능, 완결작 일괄 결제",
+        "tone_preference": "빠른 호흡 + 감정 밀도. 설명 지양, 행동·대사 중심",
+    },
+    "20~30대 남성": {
+        "consumption_time": "저녁/주말",
+        "motivation": "성취감 대리, 현실 도피, 쾌감 충족",
+        "preferred_genres": "현판 · 판타지 · 무협 · 헌터물 · 게임판타지",
+        "preferred_hooks": "먼치킨, 레벨업, 세계관 공개, 랭커 대결",
+        "identification": "높음 — 주인공 = 나",
+        "payment": "코인 충전 대량 소비, 연재 실시간 추적",
+        "tone_preference": "간결·건조. 설명보다 행동. 스탯/능력치 시각화 선호",
+    },
+    "40대 이상 여성": {
+        "consumption_time": "여유 시간, 주 1~3회",
+        "motivation": "감정 카타르시스, 여운, 양질의 서사",
+        "preferred_genres": "로맨스 · 로판 · 육아물 · 가족물 · 치정",
+        "preferred_hooks": "섬세한 감정선, 가족 유대, 인물의 성장",
+        "identification": "낮음 — 관찰자적 몰입",
+        "payment": "양질의 완결작 선호, 단행본/일괄 구매",
+        "tone_preference": "정제된 문장, 인물 심리 깊이 있게, 급전개 지양",
+    },
+    "청소년 남성": {
+        "consumption_time": "거의 매일, 방과후",
+        "motivation": "오락, 성취감, 세계관 탐험",
+        "preferred_genres": "판타지 · 현판 · 게임판타지 · 무협 · 아이돌물",
+        "preferred_hooks": "레벨업, 능력 획득, 던전 클리어, 시스템 메시지",
+        "identification": "매우 높음 — 주인공 = 나",
+        "payment": "무료 연재 위주, 극히 선택적 결제",
+        "tone_preference": "짧고 직접적, 스탯·시스템 시각화 적극 활용",
+    },
+}
+
+
+def get_reader_persona_block(persona):
+    """타겟 독자 페르소나 정보를 프롬프트 블록으로."""
+    if not persona or persona not in READER_PERSONAS:
+        return ""
+    p = READER_PERSONAS[persona]
+    lines = [f"[타겟 독자 페르소나 — {persona}]"]
+    lines.append(f"주 소비 시간: {p['consumption_time']}")
+    lines.append(f"소비 동기: {p['motivation']}")
+    lines.append(f"선호 장르: {p['preferred_genres']}")
+    lines.append(f"선호 훅: {p['preferred_hooks']}")
+    lines.append(f"동일시 필요도: {p['identification']}")
+    lines.append(f"결제 성향: {p['payment']}")
+    lines.append(f"선호 톤: {p['tone_preference']}")
+    lines.append("")
+    lines.append("※ 이 독자가 이탈하지 않도록 훅·톤·동일시 장치를 최적화할 것.")
+    return "\n".join(lines)
+
+
+# =================================================================
+# [2-4] FLOW INDUCTION — 강종현(2024) 몰입 이론 기반
+# =================================================================
+FLOW_INDUCTION_RULES = """[독자 몰입 유도 규칙 — 강종현(2024) 몰입(Flow) 이론 기반]
+
+★ 몰입 3단계 — 이 회차가 통과해야 할 조건
+
+1단계. 명확한 목표 설정
+   □ 독자가 '이 회차의 목적'을 3줄 안에 감지
+   □ 도입부 첫 문장에 충격/터부/반전 중 하나 배치
+   □ 장르 코드(로맨스/판타지/스릴러)가 초반 3문단 안에 확정
+
+2단계. 도전과 기술의 균형
+   □ 설득력 있는 문장 (AI 투 절대 금지)
+   □ 독자-주인공 동일시 장치 삽입 (최소 1회)
+     · 일반명사/애칭으로 부르기 ('그녀', '선배', '공주')
+     · 내면 독백으로 공감 유발
+     · 일상적 감정 언어화 ('~한 기분', '~인 것처럼')
+   □ 개연성 없는 비약 금지
+   □ 세계관/설정 과다 설명 금지 (2~3문장 안에 녹이기)
+
+3단계. 즉각적 피드백 요소
+   □ 댓글 유발 떡밥 or 반전 1개 이상
+     (독자가 '이거 뭐지?' '다음에 어떻게 될까?'를 품게)
+   □ 작가의 참신한 시도 — 장면 연출, 언어 선택, 사건 배치
+   □ 회차 마지막에 '다음 회차 결제 의사'가 생길 만한 훅
+
+★ 몰입 실패 지점 — 반드시 피할 것
+   ✗ 선택 실패: 제목 유치함 / 길이 과도 / 내용 유추 불가
+   ✗ 진입 실패: 초반 지루함 / 설명 남용 / 사건 지연
+   ✗ 몰입 실패: 분위기 흐트러짐 / 개연성 붕괴 / 톤 혼선
+
+★ 몰입 체화 — 도달 목표
+   - 현장감 (독자가 손에 땀 쥐게)
+   - 즉각 상상 (읽음과 동시에 이미지화)
+   - 감정 카타르시스 (회차 끝에 여운)
+   - 시간 감각 왜곡 (독자가 '벌써 끝났어?' 또는 '시간 가는 줄 몰랐어')
+""".strip()
+
+
+# =================================================================
+# [2-5] READER SIMULATION — 시뮬레이션 프롬프트 (강종현 2024)
+# =================================================================
+def build_reader_simulation_prompt(episode_text, persona, genre=""):
+    """타겟 독자 페르소나로 가장해 회차에 대한 피드백 생성."""
+    persona_block = get_reader_persona_block(persona)
+    g_block = f"\n[장르] {genre}" if genre else ""
+    return f"""당신은 이 작품의 타겟 독자 '{persona}'입니다. 아래 웹소설 회차를 실제 독자처럼 읽고, 몰입 이론(강종현, 2024) 관점에서 피드백하세요.
+
+{persona_block}
+{g_block}
+
+[웹소설 회차 원고]
+{episode_text}
+
+[피드백 지침]
+실제 독자처럼 솔직하게 반응. 작가 입장 금지. 문학 평론 금지.
+
+[JSON 출력 — 이 구조를 정확히 따를 것]
+{{
+  "flow_entry": {{
+    "success": true/false,
+    "entry_point": "몇 번째 문장/문단에서 몰입 진입했는지 (실패 시 이유)",
+    "clarity_score": 1~10
+  }},
+  "dropout_points": [
+    {{"location": "문단 위치", "reason": "왜 이탈하고 싶었는지"}}
+  ],
+  "identification": {{
+    "works": true/false,
+    "evidence": "동일시가 작동한(또는 실패한) 구체적 장면"
+  }},
+  "comment_worthy": [
+    "댓글로 남기고 싶은 포인트 1~3개"
+  ],
+  "payment_intent": {{
+    "next_episode": true/false,
+    "reason": "다음 화 결제 이유 또는 거부 이유"
+  }},
+  "flow_score": 1~10,
+  "honest_verdict": "한 줄 평 (독자 말투로)"
+}}""".strip()
 
 # =================================================================
 # [3] GENRE RULES
@@ -909,6 +1063,7 @@ def build_parse_brief_prompt(brief_text):
     """기획서 텍스트를 컨셉 카드 JSON으로 파싱."""
     primary_list = list(NARRATIVE_MOTIFS["primary"].keys())
     secondary_list = list(NARRATIVE_MOTIFS["secondary"].keys())
+    persona_list = list(READER_PERSONAS.keys())
     return f"""다음은 웹소설/드라마 기획서 텍스트입니다. 이 내용을 웹소설 컨셉 카드 JSON으로 변환하세요.
 
 [기획서 원문]
@@ -923,6 +1078,8 @@ def build_parse_brief_prompt(brief_text):
   · primary_motif 선택지: {primary_list}
   · secondary_motif 선택지: {secondary_list}
   · 없으면 "일상" / "" 로 표기
+- 타겟 독자 페르소나 자동 판별 (장르·분위기·수위·소재로 추론):
+  · target_persona 선택지: {persona_list}
 - 주인공 성격이 실리적이거나 반동인물적이면 is_antihero=true
 
 [JSON 출력 — 이 구조를 정확히 따를 것]
@@ -933,10 +1090,16 @@ def build_parse_brief_prompt(brief_text):
   "formula_tags": ["환생","역하렘","치정" 등 해당되는 태그만],
   "primary_motif": "회귀|빙의|환생|귀환|차원이동|일상 중 하나",
   "secondary_motif": "성장물|먼치킨물|사이다물|시한부물|책빙의물|육아물|법정물|학원물|아이돌물|전문직물|연예계물|헌터물 중 하나 (없으면 빈 문자열)",
+  "target_persona": "10대 여성|20~30대 여성|20~30대 남성|40대 이상 여성|청소년 남성 중 하나",
   "protagonist": {{
     "name": "", "age": 0, "role": "직업/지위",
     "goal": "원하는 것", "need": "필요한 것", "fatal_flaw": "치명적 결함",
-    "is_antihero": false
+    "is_antihero": false,
+    "identification_strategy": {{
+      "naming_style": "실명 사용 | 일반명사 통일 | 애칭 중심 중 하나",
+      "empathy_points": ["독자가 공감할 감정/상황 1~3개"],
+      "inner_monologue_style": "내면 독백 톤 서술 (예: 냉소적 자기 관찰, 체념적 짧은 사유)"
+    }}
   }},
   "love_interests": [
     {{"name": "", "role": "", "appeal": "매력 포인트", "conflict": "관계의 갈등 요소"}}
@@ -956,6 +1119,7 @@ def build_generate_concept_prompt(idea_text, genre=""):
     g_block = f"\n[장르]\n{genre}" if genre else ""
     primary_list = list(NARRATIVE_MOTIFS["primary"].keys())
     secondary_list = list(NARRATIVE_MOTIFS["secondary"].keys())
+    persona_list = list(READER_PERSONAS.keys())
     return f"""다음 아이디어를 기반으로 웹소설 컨셉 카드를 생성하세요.
 
 [아이디어]
@@ -971,6 +1135,9 @@ def build_generate_concept_prompt(idea_text, genre=""):
 - 서사 모티프 판별:
   · primary_motif: {primary_list} 중 하나
   · secondary_motif: {secondary_list} 중 하나 (없으면 빈 문자열)
+- 타겟 독자 페르소나 판별:
+  · target_persona: {persona_list} 중 하나
+- 주인공 동일시 전략 설계 (독자가 몰입할 수 있도록)
 - 주인공이 실리적/반동인물적 성향이면 is_antihero=true
 - 시놉시스 3~5문장
 
@@ -980,7 +1147,15 @@ def build_generate_concept_prompt(idea_text, genre=""):
   "formula_tags": [],
   "primary_motif": "",
   "secondary_motif": "",
-  "protagonist": {{"name":"","age":0,"role":"","goal":"","need":"","fatal_flaw":"","is_antihero":false}},
+  "target_persona": "",
+  "protagonist": {{
+    "name":"","age":0,"role":"","goal":"","need":"","fatal_flaw":"","is_antihero":false,
+    "identification_strategy": {{
+      "naming_style": "",
+      "empathy_points": [],
+      "inner_monologue_style": ""
+    }}
+  }},
   "love_interests": [
     {{"name":"","role":"","appeal":"","conflict":""}}
   ],
@@ -1271,10 +1446,12 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
                                plant_map_relevant, formula_tags=None,
                                producer_note="", style_strength="중",
                                target_length=5200, platform="카카오페이지",
-                               primary_motif="", secondary_motif=""):
-    """회차 원고 집필 — 플랫폼별 분량 자동 적용 + 서사 모티프 구조 반영."""
+                               primary_motif="", secondary_motif="",
+                               target_persona=""):
+    """회차 원고 집필 — 플랫폼별 분량 + 서사 모티프 + 독자 페르소나 반영."""
     tags_block = get_formula_block(formula_tags or [])
     motif_block = get_motif_block(primary_motif, secondary_motif)
+    persona_block = get_reader_persona_block(target_persona)
     lp = get_platform_length(platform)
     min_len = lp["min"]
     max_len = lp["max"]
@@ -1288,7 +1465,11 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
 
 {motif_block}
 
+{persona_block}
+
 {_rating_block(rating)}
+
+{FLOW_INDUCTION_RULES}
 
 {AI_ANTI_PATTERN}
 
