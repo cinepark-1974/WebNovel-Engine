@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.1 — main.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.2 — main.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 © 2026 BLUE JEANS PICTURES
@@ -15,7 +15,7 @@ from datetime import datetime
 
 from prompt import (
     SYSTEM_PROMPT, GENRE_RULES, WEB_NOVEL_FORMULAS, CLIFFHANGER_TYPES,
-    PLATFORM_LENGTH, get_platform_length,
+    PLATFORM_LENGTH, get_platform_length, NARRATIVE_MOTIFS,
     build_parse_brief_prompt, build_generate_concept_prompt, build_augment_concept_prompt,
     build_core_arc_prompt, build_extension_arc_prompt,
     build_plant_payoff_prompt, build_character_bible_prompt,
@@ -493,11 +493,23 @@ def render_concept_card(card):
             tag_html = " ".join([f'<span class="seq">{t}</span>' for t in tags])
             st.markdown(tag_html, unsafe_allow_html=True)
 
+        # 서사 모티프 표시
+        pm = card.get("primary_motif", "")
+        sm = card.get("secondary_motif", "")
+        if pm or sm:
+            motif_bits = []
+            if pm:
+                motif_bits.append(f'<span class="seq">1차: {pm}</span>')
+            if sm:
+                motif_bits.append(f'<span class="seq">2차: {sm}</span>')
+            st.markdown(" ".join(motif_bits), unsafe_allow_html=True)
+
         col1, col2 = st.columns(2)
         with col1:
             sub_header("주인공")
             p = card.get("protagonist", {})
-            st.markdown(f"**{p.get('name', '')}** ({p.get('age', '')}세, {p.get('role', '')})")
+            antihero_badge = " 🎭 반동인물" if p.get("is_antihero") else ""
+            st.markdown(f"**{p.get('name', '')}** ({p.get('age', '')}세, {p.get('role', '')}){antihero_badge}")
             st.markdown(f"- Goal: {p.get('goal', '')}")
             st.markdown(f"- Need: {p.get('need', '')}")
             st.markdown(f"- Fatal Flaw: {p.get('fatal_flaw', '')}")
@@ -671,13 +683,50 @@ with main_tabs[0]:
             default=safe_default_tags,
         )
 
+        # ── 서사 모티프 이중 구조 ──
+        st.markdown("**서사 모티프 (고경은 2022 연구 기반)**")
+        col_m1, col_m2 = st.columns(2)
+        with col_m1:
+            primary_opts = [""] + list(NARRATIVE_MOTIFS["primary"].keys())
+            cur_primary = card.get("primary_motif", "")
+            p_idx = primary_opts.index(cur_primary) if cur_primary in primary_opts else 0
+            primary_motif = st.selectbox(
+                "1차 모티프 (시공간 이동)",
+                primary_opts,
+                index=p_idx,
+                help="회빙환 계열. 없으면 '일상' 선택",
+                key="direct_primary_motif",
+            )
+        with col_m2:
+            secondary_opts = [""] + list(NARRATIVE_MOTIFS["secondary"].keys())
+            cur_secondary = card.get("secondary_motif", "")
+            s_idx = secondary_opts.index(cur_secondary) if cur_secondary in secondary_opts else 0
+            secondary_motif = st.selectbox(
+                "2차 모티프 (소재 결합)",
+                secondary_opts,
+                index=s_idx,
+                help="성장물/사이다물/시스템물 등 '~물' 분류",
+                key="direct_secondary_motif",
+            )
+
+        # ── 반동인물 주인공 체크 ──
+        is_antihero = st.checkbox(
+            "주인공이 반동인물적 성향 (실리적·계산적·도덕적으로 완벽하지 않음)",
+            value=card.get("protagonist", {}).get("is_antihero", False),
+            help="박자희 2024 연구 기반. 착하기만 한 주인공보다 실리 따지는 주인공을 선호하는 독자 경향",
+            key="direct_is_antihero",
+        )
+
         if st.button("✅ 직접 입력 컨셉 카드 저장", key="save_direct"):
             st.session_state.concept_card = {
                 "title": title, "genre": genre, "logline": logline,
                 "formula_tags": tags,
+                "primary_motif": primary_motif,
+                "secondary_motif": secondary_motif,
                 "protagonist": {
                     "name": p_name, "age": p.get("age", 0), "role": p.get("role", ""),
                     "goal": p_goal, "need": p_need, "fatal_flaw": p_flaw,
+                    "is_antihero": is_antihero,
                 },
                 "love_interests": card.get("love_interests", []),
                 "villain": card.get("villain", {}),
@@ -1290,6 +1339,8 @@ with main_tabs[2]:
                                 style_strength=st.session_state.style_strength,
                                 target_length=target_length,
                                 platform=platform,
+                                primary_motif=concept.get("primary_motif", ""),
+                                secondary_motif=concept.get("secondary_motif", ""),
                             ),
                             MAX_TOKENS_EPISODE,
                         )
@@ -1620,7 +1671,7 @@ with main_tabs[2]:
 st.markdown("---")
 st.markdown(
     '<p style="text-align:center;font-family:var(--body);font-size:0.7rem;color:var(--dim);">'
-    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.1'
+    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.2'
     '</p>',
     unsafe_allow_html=True,
 )
