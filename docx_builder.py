@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.2 — docx_builder.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.3 — docx_builder.py
 DOCX 출력 모듈
 - 회차별 DOCX (수정 편의)
 - 시즌 전체 DOCX (피칭/보관용)
