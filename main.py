@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.3 — main.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.5 — main.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 © 2026 BLUE JEANS PICTURES
@@ -16,6 +16,7 @@ from datetime import datetime
 from prompt import (
     SYSTEM_PROMPT, GENRE_RULES, WEB_NOVEL_FORMULAS, CLIFFHANGER_TYPES,
     PLATFORM_LENGTH, get_platform_length, NARRATIVE_MOTIFS, READER_PERSONAS,
+    NARRATIVE_TONE_PRESETS, build_system_prompt,
     build_parse_brief_prompt, build_generate_concept_prompt, build_augment_concept_prompt,
     build_core_arc_prompt, build_extension_arc_prompt,
     build_plant_payoff_prompt, build_character_bible_prompt,
@@ -310,6 +311,7 @@ defaults = {
     "style_dna": "",
     "style_strength": "중",
     "brief_text": "",
+    "intimacy_schedule": None,
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -336,6 +338,7 @@ PROJECT_KEYS = [
     "plant_map_core", "plant_map_extension", "character_bible",
     "episode_plots", "episodes_19", "episodes_15", "episode_summaries",
     "producer_note", "style_dna", "style_strength", "brief_text",
+    "intimacy_schedule",
 ]
 
 
@@ -733,6 +736,27 @@ with main_tabs[0]:
                 f"동일시: {pdat['identification']}"
             )
 
+        # ── ⭐ 작품 지향점 (v2.5 신규) ──
+        st.markdown("**⭐ 작품 지향점 (작가 페르소나 + 수위 톤)**")
+        tone_opts = [""] + list(NARRATIVE_TONE_PRESETS.keys())
+        cur_tone = card.get("narrative_tone", "")
+        tone_idx = tone_opts.index(cur_tone) if cur_tone in tone_opts else 0
+        narrative_tone = st.selectbox(
+            "작품 지향점",
+            tone_opts,
+            index=tone_idx,
+            help="집필 시 작가 페르소나·수위 톤·서사 기능 체크가 자동 주입. '포르노 아닌 장르 픽션'의 상업 표준 적용.",
+            key="direct_narrative_tone",
+        )
+        if narrative_tone:
+            tdat = NARRATIVE_TONE_PRESETS[narrative_tone]
+            st.caption(f"📖 {tdat['description']}")
+            st.caption(f"🎬 참고작: {tdat['reference_works']}")
+            if tdat.get("allowed_elements"):
+                with st.expander("🔓 허용 소재 (장르 필수 요소)"):
+                    for el in tdat['allowed_elements']:
+                        st.markdown(f"- {el}")
+
         # ── 반동인물 주인공 체크 ──
         is_antihero = st.checkbox(
             "주인공이 반동인물적 성향 (실리적·계산적·도덕적으로 완벽하지 않음)",
@@ -777,6 +801,7 @@ with main_tabs[0]:
                 "primary_motif": primary_motif,
                 "secondary_motif": secondary_motif,
                 "target_persona": target_persona,
+                "narrative_tone": narrative_tone,
                 "protagonist": {
                     "name": p_name, "age": p.get("age", 0), "role": p.get("role", ""),
                     "goal": p_goal, "need": p_need, "fatal_flaw": p_flaw,
@@ -916,14 +941,25 @@ with main_tabs[1]:
                     all_blocks.extend(result.get("blocks", []))
                     all_summaries.append(result.get("chunk_summary", ""))
                     prev_summary = result.get("chunk_summary", "")
+                    # v2.4: 19금 관능 스케줄 추출 (첫 청크에만 있음)
+                    if chunk == 1 and result.get("intimacy_schedule"):
+                        st.session_state.intimacy_schedule = result.get("intimacy_schedule")
                     progress.progress(chunk / total_chunks)
 
                 st.session_state.core_arc = all_blocks
                 st.session_state.core_arc_summaries = all_summaries
+                ep_count = sum(len(b.get('episodes', [])) for b in all_blocks)
                 status.success(
-                    f"✅ Core Arc 완성 — {len(all_blocks)}블록, "
-                    f"{sum(len(b.get('episodes', [])) for b in all_blocks)}회차"
+                    f"✅ Core Arc 완성 — {len(all_blocks)}블록, {ep_count}회차"
                 )
+                # v2.4: 관능 스케줄 안내
+                if st.session_state.get("intimacy_schedule"):
+                    with st.expander(f"⭐ 19금 관능 축 스케줄 ({len(st.session_state.intimacy_schedule)}지점)"):
+                        for item in st.session_state.intimacy_schedule:
+                            st.markdown(
+                                f"- **EP {item.get('ep_range','')}** · "
+                                f"`{item.get('level','')}` — {item.get('description','')}"
+                            )
 
             if st.session_state.core_arc:
                 st.divider()
@@ -1158,6 +1194,9 @@ with main_tabs[1]:
                                     build_episode_plot_prompt(
                                         block_text, plant_rel, ep_num, prev_sum,
                                         st.session_state.producer_note,
+                                        concept_dict=concept,
+                                        total_eps=total_plot_eps,
+                                        intimacy_schedule=concept.get("intimacy_schedule") or st.session_state.get("intimacy_schedule"),
                                     ),
                                     MAX_TOKENS_STRUCTURE,
                                 )
@@ -1262,6 +1301,9 @@ with main_tabs[1]:
                                 build_episode_plot_prompt(
                                     block_text, plant_rel, ep_select, prev_sum,
                                     st.session_state.producer_note,
+                                    concept_dict=concept,
+                                    total_eps=total_plot_eps,
+                                    intimacy_schedule=concept.get("intimacy_schedule") or st.session_state.get("intimacy_schedule"),
                                 ),
                                 MAX_TOKENS_STRUCTURE,
                             )
@@ -1496,8 +1538,17 @@ with main_tabs[2]:
                                 primary_motif=concept.get("primary_motif", ""),
                                 secondary_motif=concept.get("secondary_motif", ""),
                                 target_persona=concept.get("target_persona", ""),
+                                concept_dict=concept,
+                                ep_number=ep_write,
+                                total_eps=total_eps,
+                                intimacy_schedule=concept.get("intimacy_schedule") or st.session_state.get("intimacy_schedule"),
+                                narrative_tone=concept.get("narrative_tone", ""),
                             ),
                             MAX_TOKENS_EPISODE,
+                            system=build_system_prompt(
+                                narrative_tone=concept.get("narrative_tone", ""),
+                                for_episode_write=True,
+                            ),
                         )
 
                     if result:
@@ -1961,7 +2012,7 @@ with main_tabs[2]:
 st.markdown("---")
 st.markdown(
     '<p style="text-align:center;font-family:var(--body);font-size:0.7rem;color:var(--dim);">'
-    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.3'
+    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.5'
     '</p>',
     unsafe_allow_html=True,
 )
