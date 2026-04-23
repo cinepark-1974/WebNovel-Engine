@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.5 — prompt.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.6 — prompt.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 © 2026 BLUE JEANS PICTURES
@@ -1436,6 +1436,7 @@ def build_parse_brief_prompt(brief_text):
   "narrative_tone": "15금 일반|19금 치정 로맨스 (리디 성인관 톤)|19금 판타지 (왕좌의 게임 톤)|19금 현판 (문피아 남성향 톤)|19금 게임판타지 (남성향)|조아라 노블레스 톤 중 하나",
   "protagonist": {{
     "name": "", "age": 0, "role": "직업/지위",
+    "profession": "한국 전문직 카테고리 명 (법률직·의료직·재벌2세3세·헌터각성자·판타지직업·회빙환주인공 등) + 세부 직종 명시",
     "goal": "원하는 것", "need": "필요한 것", "fatal_flaw": "치명적 결함",
     "is_antihero": false,
     "identification_strategy": {{
@@ -1445,10 +1446,10 @@ def build_parse_brief_prompt(brief_text):
     }}
   }},
   "love_interests": [
-    {{"name": "", "role": "", "appeal": "매력 포인트", "conflict": "관계의 갈등 요소"}}
+    {{"name": "", "role": "", "profession": "직업/카테고리 명시", "appeal": "매력 포인트", "conflict": "관계의 갈등 요소"}}
   ],
   "villain": {{
-    "name": "", "role": "", "wants": "", "justification": "", "limits": "", "win_rate": ""
+    "name": "", "role": "", "profession": "직업/카테고리 명시", "wants": "", "justification": "", "limits": "", "win_rate": ""
   }},
   "world": "세계관/배경",
   "relationships": "관계 구도 서술",
@@ -1759,20 +1760,31 @@ def build_plant_payoff_prompt(arc_text, characters, arc_type="core"):
 }}""".strip()
 
 
-def build_character_bible_prompt(concept_card):
-    """웹소설 경량 캐릭터 바이블 생성."""
+def build_character_bible_prompt(concept_card_json, profession_blocks=""):
+    """웹소설 경량 캐릭터 바이블 생성. v2.6: 직업 블록 주입."""
+    prof_section = f"\n\n{profession_blocks}" if profession_blocks else ""
     return f"""[TASK] 웹소설 캐릭터 바이블 생성
 
 [컨셉 카드]
-{concept_card}
+{concept_card_json}
+{prof_section}
 
 [캐릭터 바이블 필드 (캐릭터당)]
 - 이름, 나이, 직업/지위, 외모 핵심
-- 말투 (예문 2~3개)
-- 행동 패턴 (특유의 버릇/제스처)
-- 결핍/비밀
-- 욕망/목표
+- 말투 (예문 2~3개 — 직업 전문 용어 자연스럽게 녹임)
+- 행동 패턴 (특유의 버릇/제스처 — 직업적 습관 반영)
+- 결핍/비밀 (직업적 스트레스가 개인의 상처와 맞물림)
+- 욕망/목표 (직업 세계에서의 야망 포함)
 - 변화 아크 (시즌 내 변화 방향)
+
+[직업 디테일 활용 규칙]
+- 위에 제공된 직업 블록의 세부 디테일을 캐릭터에 녹일 것
+- 전문 용어는 말투 예문에 1~2개 자연스럽게 포함
+- 하루 타임라인의 특징을 행동 패턴에 반영
+- 공간 디테일을 외모·소품 묘사에 활용
+- 직업적 스트레스를 결핍/비밀에 연결
+- 한국 맥락(계급·호칭·조직문화)을 반드시 반영
+- 금지 사항(forbidden)은 반드시 회피
 
 [JSON 출력]
 {{
@@ -1864,8 +1876,9 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
                                concept_dict=None,
                                ep_number=0, total_eps=50,
                                intimacy_schedule=None,
-                               narrative_tone=""):
-    """회차 원고 집필. v2.5: 작품 지향점(작가 페르소나) + 픽션 프레임 + 거부 방지."""
+                               narrative_tone="",
+                               profession_blocks=""):
+    """회차 원고 집필. v2.6: Profession Pack 블록 주입."""
     tags_block = get_formula_block(formula_tags or [])
     motif_block = get_motif_block(primary_motif, secondary_motif)
     persona_block = get_reader_persona_block(target_persona)
@@ -1873,8 +1886,10 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
     character_flags = get_character_flags_block(concept_dict or {})
     pacing_block = get_pacing_block(ep_number, total_eps) if ep_number and total_eps else ""
     intimacy_directive = get_intimacy_schedule_for_ep(intimacy_schedule, ep_number) if ep_number else ""
-    # v2.5 신규 — 작품 지향점 톤 블록 (집필 프롬프트에도 재차 주입)
+    # v2.5 신규
     tone_block = get_narrative_tone_block(narrative_tone) if narrative_tone else ""
+    # v2.6 신규 — 직업 블록
+    prof_section = f"\n\n{profession_blocks}\n" if profession_blocks else ""
     lp = get_platform_length(platform)
     min_len = lp["min"]
     max_len = lp["max"]
@@ -1893,7 +1908,7 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
 {persona_block}
 
 {character_flags}
-
+{prof_section}
 {pacing_block}
 
 {intimacy_directive}
