@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.5 — main.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.6 — main.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 © 2026 BLUE JEANS PICTURES
@@ -24,6 +24,10 @@ from prompt import (
     build_rating_convert_prompt, build_alternative_scene_prompt,
     build_quality_check_prompt, build_episode_summary_prompt,
     build_reader_simulation_prompt,
+)
+from profession_pack import (
+    PROFESSION_PACK, PROFESSION_KEYWORDS,
+    detect_profession_category, build_profession_block, build_multi_profession_block,
 )
 from parser import parse_brief
 from docx_builder import (
@@ -517,6 +521,12 @@ def render_concept_card(card):
             p = card.get("protagonist", {})
             antihero_badge = " 🎭 반동인물" if p.get("is_antihero") else ""
             st.markdown(f"**{p.get('name', '')}** ({p.get('age', '')}세, {p.get('role', '')}){antihero_badge}")
+            # v2.6: 직업 표시
+            prof = p.get("profession", "")
+            if prof:
+                cats = detect_profession_category(prof)
+                cat_badge = f" 📚 {cats[0]}" if cats else ""
+                st.caption(f"💼 {prof}{cat_badge}")
             st.markdown(f"- Goal: {p.get('goal', '')}")
             st.markdown(f"- Need: {p.get('need', '')}")
             st.markdown(f"- Fatal Flaw: {p.get('fatal_flaw', '')}")
@@ -676,6 +686,18 @@ with main_tabs[0]:
             p_goal = st.text_input("Goal", value=p.get("goal", ""), key="pgoal")
             p_need = st.text_input("Need", value=p.get("need", ""), key="pneed")
             p_flaw = st.text_input("Fatal Flaw", value=p.get("fatal_flaw", ""), key="pflaw")
+            # v2.6: 주인공 직업
+            p_profession = st.text_input(
+                "직업 / 직종 (Profession Pack 자동 감지)",
+                value=p.get("profession") or p.get("role", ""),
+                placeholder="예: 재벌 2세, S급 헌터, 회귀한 공작영애, 오너 셰프, 변호사...",
+                key="pprof",
+                help="한국 전문직 23개 카테고리 + 판타지/헌터/회빙환 자동 감지",
+            )
+            if p_profession:
+                cats = detect_profession_category(p_profession)
+                if cats:
+                    st.caption(f"📚 감지된 카테고리: {', '.join(cats)}")
 
             sq = card.get("season_questions", {})
             romance_q = st.text_input("시즌 질문 — 로맨스 축", value=sq.get("romance", ""))
@@ -804,6 +826,7 @@ with main_tabs[0]:
                 "narrative_tone": narrative_tone,
                 "protagonist": {
                     "name": p_name, "age": p.get("age", 0), "role": p.get("role", ""),
+                    "profession": p_profession,
                     "goal": p_goal, "need": p_need, "fatal_flaw": p_flaw,
                     "is_antihero": is_antihero,
                     "identification_strategy": {
@@ -1012,11 +1035,48 @@ with main_tabs[1]:
         with sub_tabs_2[2]:
             sub_header("캐릭터 바이블")
 
+            # v2.6: 컨셉 카드에서 각 인물의 직업 정보를 추출해 Profession Pack 블록 생성
+            def _collect_characters_for_prof(concept_d):
+                chars = []
+                p = concept_d.get("protagonist", {}) or {}
+                if p.get("profession") or p.get("role"):
+                    chars.append({
+                        "name": p.get("name", "주인공"),
+                        "profession": p.get("profession") or p.get("role", ""),
+                    })
+                for li in concept_d.get("love_interests", []) or []:
+                    if li.get("profession") or li.get("role"):
+                        chars.append({
+                            "name": li.get("name", ""),
+                            "profession": li.get("profession") or li.get("role", ""),
+                        })
+                v = concept_d.get("villain", {}) or {}
+                if v.get("profession") or v.get("role"):
+                    chars.append({
+                        "name": v.get("name", "빌런"),
+                        "profession": v.get("profession") or v.get("role", ""),
+                    })
+                return chars
+
             if st.button("👥 캐릭터 바이블 생성", type="primary"):
+                prof_chars = _collect_characters_for_prof(concept)
+                prof_blocks_text = build_multi_profession_block(prof_chars) if prof_chars else ""
+
+                # Profession Pack 감지 결과 표시
+                if prof_blocks_text:
+                    detected_profs = []
+                    for c in prof_chars:
+                        cats = detect_profession_category(c["profession"])
+                        if cats:
+                            detected_profs.append(f"{c['name']}({cats[0]})")
+                    if detected_profs:
+                        st.info(f"📚 Profession Pack 적용: {' · '.join(detected_profs)}")
+
                 with st.spinner("캐릭터 바이블 생성 중..."):
                     raw = call_claude(
                         build_character_bible_prompt(
-                            json.dumps(concept, ensure_ascii=False, indent=2)
+                            json.dumps(concept, ensure_ascii=False, indent=2),
+                            profession_blocks=prof_blocks_text,
                         ),
                         MAX_TOKENS_STRUCTURE,
                     )
@@ -1520,6 +1580,32 @@ with main_tabs[2]:
                         pm = st.session_state.plant_map_extension
                     plant_rel = get_relevant_plants(pm, ep_write)
 
+                    # v2.6: 이번 회차 등장 캐릭터의 Profession Pack 블록 생성
+                    # 회차 플롯에서 등장 캐릭터 추출
+                    ep_chars = set()
+                    plot_data = st.session_state.episode_plots.get(ep_write, {})
+                    for scene in plot_data.get("development", {}).get("scenes", []):
+                        for c in scene.get("characters", []):
+                            ep_chars.add(c.strip())
+                    # 컨셉 카드 직업 매칭
+                    prof_chars_ep = []
+                    p = concept.get("protagonist", {}) or {}
+                    p_name = p.get("name", "")
+                    if p_name and any(p_name in ch for ch in ep_chars):
+                        if p.get("profession") or p.get("role"):
+                            prof_chars_ep.append({"name": p_name, "profession": p.get("profession") or p.get("role", "")})
+                    for li in concept.get("love_interests", []) or []:
+                        li_name = li.get("name", "")
+                        if li_name and any(li_name in ch for ch in ep_chars):
+                            if li.get("profession") or li.get("role"):
+                                prof_chars_ep.append({"name": li_name, "profession": li.get("profession") or li.get("role", "")})
+                    v = concept.get("villain", {}) or {}
+                    v_name = v.get("name", "")
+                    if v_name and any(v_name in ch for ch in ep_chars):
+                        if v.get("profession") or v.get("role"):
+                            prof_chars_ep.append({"name": v_name, "profession": v.get("profession") or v.get("role", "")})
+                    prof_blocks_ep = build_multi_profession_block(prof_chars_ep) if prof_chars_ep else ""
+
                     with st.spinner(f"EP{ep_write} 집필 중 (Opus)..."):
                         result = call_claude_opus(
                             build_episode_write_prompt(
@@ -1543,6 +1629,7 @@ with main_tabs[2]:
                                 total_eps=total_eps,
                                 intimacy_schedule=concept.get("intimacy_schedule") or st.session_state.get("intimacy_schedule"),
                                 narrative_tone=concept.get("narrative_tone", ""),
+                                profession_blocks=prof_blocks_ep,
                             ),
                             MAX_TOKENS_EPISODE,
                             system=build_system_prompt(
@@ -2012,7 +2099,7 @@ with main_tabs[2]:
 st.markdown("---")
 st.markdown(
     '<p style="text-align:center;font-family:var(--body);font-size:0.7rem;color:var(--dim);">'
-    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.5'
+    '© 2026 BLUE JEANS PICTURES · Web Novel Engine v2.6'
     '</p>',
     unsafe_allow_html=True,
 )
