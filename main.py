@@ -520,7 +520,10 @@ def render_concept_card(card):
             sub_header("주인공")
             p = card.get("protagonist", {})
             antihero_badge = " 🎭 반동인물" if p.get("is_antihero") else ""
-            st.markdown(f"**{p.get('name', '')}** ({p.get('age', '')}세, {p.get('role', '')}){antihero_badge}")
+            # v2.6 버그픽스: age 문자열에 "세"가 중복되지 않도록 정제
+            p_age = str(p.get("age", "")).strip()
+            p_age_str = p_age if p_age.endswith("세") else f"{p_age}세" if p_age else ""
+            st.markdown(f"**{p.get('name', '')}** ({p_age_str}, {p.get('role', '')}){antihero_badge}")
             # v2.6: 직업 표시
             prof = p.get("profession", "")
             if prof:
@@ -1115,9 +1118,19 @@ with main_tabs[1]:
                     occupation = char.get("occupation", "")
                     appearance = char.get("appearance", "")
 
-                    header = f"**{name}**"
+                    # v2.6 버그픽스: age 필드에 "32세" 같은 문자열이 들어와도 "세세" 중복 방지
+                    age_str = ""
                     if age:
-                        header += f" · {age}세"
+                        age_clean = str(age).strip()
+                        # 이미 "세"로 끝나면 그대로, 아니면 "세" 추가
+                        if age_clean.endswith("세"):
+                            age_str = age_clean
+                        else:
+                            age_str = f"{age_clean}세"
+
+                    header = f"**{name}**"
+                    if age_str:
+                        header += f" · {age_str}"
                     if occupation:
                         header += f" · {occupation}"
 
@@ -1935,7 +1948,12 @@ with main_tabs[2]:
                 # ── 3가지 다운로드 옵션 ──
                 col_dl1, col_dl2, col_dl3 = st.columns(3)
 
-                # 1. 기획서 DOCX
+                # v2.6.1: 프로젝트 스냅샷 (모든 탭에서 공유)
+                snapshot = build_project_snapshot()
+                snapshot_json = json.dumps(snapshot, ensure_ascii=False, indent=2)
+                date_tag = datetime.now().strftime('%Y%m%d')
+
+                # 1. 기획서 DOCX + JSON
                 with col_dl1:
                     st.markdown("**📘 기획서 DOCX**")
                     st.caption("투자/피칭용 · 컨셉+캐릭터+아크+떡밥")
@@ -1947,43 +1965,70 @@ with main_tabs[2]:
                     )
                     title = concept.get("title", "webnovel")
                     st.download_button(
-                        "⬇️ 기획서 다운로드",
+                        "⬇️ 기획서 DOCX",
                         data=proposal_bytes,
-                        file_name=f"{title}_기획서_{datetime.now().strftime('%Y%m%d')}.docx",
+                        file_name=f"{title}_기획서_{date_tag}.docx",
                         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                         key="dl_proposal",
+                        use_container_width=True,
+                    )
+                    st.download_button(
+                        "💾 프로젝트 JSON",
+                        data=snapshot_json.encode("utf-8"),
+                        file_name=f"{title}_project_{date_tag}.json",
+                        mime="application/json",
+                        key="dl_json_col1",
+                        use_container_width=True,
+                        help="엔진 재접속 시 이 JSON을 업로드하면 모든 작업 복원",
                     )
 
-                # 2. 시즌 전체 DOCX (19금/15금 각각)
+                # 2. 시즌 전체 DOCX + JSON (19금/15금 각각)
                 with col_dl2:
                     st.markdown("**📚 시즌 전체 DOCX**")
                     st.caption("회차 통합 · 커버+목차+본문")
                     if eps_19:
                         season_19_bytes = build_season_docx(eps_19, concept, "19", platform)
                         st.download_button(
-                            "⬇️ 19금 시즌 전체",
+                            f"⬇️ 19금 시즌 전체 ({len(eps_19)}화) DOCX",
                             data=season_19_bytes,
-                            file_name=f"{title}_시즌1_19금_{datetime.now().strftime('%Y%m%d')}.docx",
+                            file_name=f"{title}_시즌1_19금_{date_tag}.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             key="dl_season_19",
+                            use_container_width=True,
                         )
                     if eps_15:
                         season_15_bytes = build_season_docx(eps_15, concept, "15", platform)
                         st.download_button(
-                            "⬇️ 15금 시즌 전체",
+                            f"⬇️ 15금 시즌 전체 ({len(eps_15)}화) DOCX",
                             data=season_15_bytes,
-                            file_name=f"{title}_시즌1_15금_{datetime.now().strftime('%Y%m%d')}.docx",
+                            file_name=f"{title}_시즌1_15금_{date_tag}.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             key="dl_season_15",
+                            use_container_width=True,
                         )
+                    # 시즌 DOCX와 짝을 이루는 JSON
+                    st.download_button(
+                        "💾 프로젝트 JSON",
+                        data=snapshot_json.encode("utf-8"),
+                        file_name=f"{title}_project_{date_tag}.json",
+                        mime="application/json",
+                        key="dl_json_col2",
+                        use_container_width=True,
+                        help="엔진 재접속 시 이 JSON을 업로드하면 모든 작업 복원",
+                    )
 
-                # 3. 전체 ZIP
+                # 3. 전체 ZIP + JSON
                 with col_dl3:
                     st.markdown("**📦 전체 ZIP**")
-                    st.caption("모든 회차 TXT+DOCX · 메타데이터")
-                    if st.button("🗂️ ZIP 생성", type="primary", key="make_zip"):
+                    st.caption("모든 회차 TXT+DOCX+프로젝트 JSON")
+                    if st.button("🗂️ ZIP 생성", type="primary", key="make_zip", use_container_width=True):
                         buf = io.BytesIO()
                         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                            # v2.6.1: 프로젝트 JSON을 ZIP 루트에 포함 (재접속용)
+                            zf.writestr(
+                                f"{title}_project_{date_tag}.json",
+                                snapshot_json,
+                            )
                             # 19금 TXT + DOCX
                             for ep_num in sorted(eps_19.keys()):
                                 text = eps_19[ep_num]
@@ -2047,12 +2092,23 @@ with main_tabs[2]:
                                                        ensure_ascii=False, indent=2))
 
                         st.download_button(
-                            f"⬇️ {title}_전체.zip",
+                            f"⬇️ 전체 ZIP 다운로드",
                             data=buf.getvalue(),
-                            file_name=f"{title}_{datetime.now().strftime('%Y%m%d')}.zip",
+                            file_name=f"{title}_{date_tag}.zip",
                             mime="application/zip",
                             key="dl_zip",
+                            use_container_width=True,
                         )
+                    # ZIP 컬럼에도 JSON 단독 다운로드 제공
+                    st.download_button(
+                        "💾 프로젝트 JSON",
+                        data=snapshot_json.encode("utf-8"),
+                        file_name=f"{title}_project_{date_tag}.json",
+                        mime="application/json",
+                        key="dl_json_col3",
+                        use_container_width=True,
+                        help="엔진 재접속 시 이 JSON을 업로드하면 모든 작업 복원",
+                    )
 
                 # ── 개별 회차 다운로드 ──
                 st.divider()
