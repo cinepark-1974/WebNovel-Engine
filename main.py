@@ -24,6 +24,8 @@ from prompt import (
     build_rating_convert_prompt, build_alternative_scene_prompt,
     build_quality_check_prompt, build_episode_summary_prompt,
     build_reader_simulation_prompt,
+    # v2.6.4 — 컨텍스트 인식 묘사 시스템
+    get_character_first_episodes, detect_scene_types,
 )
 from profession_pack import (
     PROFESSION_PACK, PROFESSION_KEYWORDS,
@@ -1619,6 +1621,37 @@ with main_tabs[2]:
                             prof_chars_ep.append({"name": v_name, "profession": v.get("profession") or v.get("role", "")})
                     prof_blocks_ep = build_multi_profession_block(prof_chars_ep) if prof_chars_ep else ""
 
+                    # v2.6.4: 컨텍스트 인식 묘사 시스템 자동 계산
+                    # ① 캐릭터별 첫 등장 회차 매핑 (전체 회차 플롯 스캔)
+                    char_first_eps_map = get_character_first_episodes(
+                        st.session_state.episode_plots
+                    )
+                    # ② 이번 회차 씬별 타입 자동 분류 (키워드 휴리스틱)
+                    scene_types_list = detect_scene_types(
+                        plot_data, ep_number=ep_write
+                    )
+                    # ③ 이번 회차 등장 캐릭터의 바이블 풀 데이터 추출
+                    cb_data = st.session_state.character_bible or {}
+                    chars_full_data_ep = []
+                    # protagonist
+                    p_full = cb_data.get("protagonist", {}) or {}
+                    if p_full.get("name") and any(p_full["name"] in ch for ch in ep_chars):
+                        chars_full_data_ep.append(p_full)
+                    # love_interests
+                    for li_full in cb_data.get("love_interests", []) or []:
+                        if isinstance(li_full, dict) and li_full.get("name"):
+                            if any(li_full["name"] in ch for ch in ep_chars):
+                                chars_full_data_ep.append(li_full)
+                    # villain
+                    v_full = cb_data.get("villain", {}) or {}
+                    if v_full.get("name") and any(v_full["name"] in ch for ch in ep_chars):
+                        chars_full_data_ep.append(v_full)
+                    # supporting
+                    for sup_full in cb_data.get("supporting", []) or []:
+                        if isinstance(sup_full, dict) and sup_full.get("name"):
+                            if any(sup_full["name"] in ch for ch in ep_chars):
+                                chars_full_data_ep.append(sup_full)
+
                     with st.spinner(f"EP{ep_write} 집필 중 (Opus)..."):
                         result = call_claude_opus(
                             build_episode_write_prompt(
@@ -1643,6 +1676,10 @@ with main_tabs[2]:
                                 intimacy_schedule=concept.get("intimacy_schedule") or st.session_state.get("intimacy_schedule"),
                                 narrative_tone=concept.get("narrative_tone", ""),
                                 profession_blocks=prof_blocks_ep,
+                                # v2.6.4: 컨텍스트 인식 묘사 시스템
+                                characters_full_data=chars_full_data_ep,
+                                char_first_eps=char_first_eps_map,
+                                scene_types=scene_types_list,
                             ),
                             MAX_TOKENS_EPISODE,
                             system=build_system_prompt(
