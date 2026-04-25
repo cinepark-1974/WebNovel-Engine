@@ -1,7 +1,8 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.6 — prompt.py
+👖 BLUE JEANS WEB NOVEL ENGINE v2.6.4 — prompt.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
+v2.6.4: Context-Aware Description (첫 등장 풀 / 재등장 압축 / 씬 타입 차등)
 © 2026 BLUE JEANS PICTURES
 """
 
@@ -720,44 +721,548 @@ def build_character_full_block(characters_full_data):
 
 
 MISE_EN_SCENE_CHECKLIST = """
-[★ 미장센 강제 체크리스트 — 각 씬 1,200~1,700자 자동 보장 ★]
+[★ 미장센 체크리스트 — 씬 타입별 차등 적용 (v2.6.4) ★]
 
-각 씬에서 다음 6개 묘사 항목을 모두 포함할 것.
-한 항목이라도 비면 분량 미달 + 미장센 부족으로 처리됨.
+이번 회차의 [씬별 묘사 강도 가이드]를 먼저 확인하고, 씬 타입에 따라
+아래 6개 항목의 분량과 강도를 차등 적용할 것.
 
-1. 공간 디테일 (씬당 200~300자)
+[기본 항목 — 모든 씬 공통 적용]
+
+1. 공간 디테일
    □ 어디인가 — 구체적 장소명·층수·구역
    □ 무엇이 보이는가 — 시각적 디테일 (색·재질·구조)
    □ 무엇이 들리는가 — 소리 (배경음·정적·발걸음)
    □ 무엇이 느껴지는가 — 온도·습도·냄새·공기
 
-2. 시간/조명 묘사 (씬당 50~100자)
+2. 시간/조명 묘사
    □ 몇 시인가 — 구체적 시각
    □ 빛은 어떤가 — 자연광/인공광/그림자/계절감
 
-3. 등장 캐릭터 외모/소품 (등장 시 200~250자)
-   □ 캐릭터 바이블의 외모/패션 활용
+3. 등장 캐릭터 외모/소품
+   □ 첫 등장: 캐릭터 바이블의 외모/패션 풀 활용 (250자 내외)
+   □ 재등장: 외모 풀 묘사 금지 — 행동/말투/심리 변화에 집중
    □ 직업 공간/소품 디테일 (Profession Pack 활용)
    □ 표정의 미세한 변화
 
-4. 대사 + 비언어 신호 (씬당 500~700자)
-   □ 5턴 이상의 자연스러운 대화
+4. 대사 + 비언어 신호
+   □ 5턴 이상의 자연스러운 대화 (단, 일상/이동 씬은 3턴 이하 가능)
    □ 캐릭터별 말투 패턴 준수
    □ 대사 사이의 침묵·시선·작은 행동
 
-5. POV 캐릭터 내면 독백 (씬당 200~400자)
+5. POV 캐릭터 내면 독백
    □ 감각적 즉시 반응 (소름·체온·심박)
    □ 과거 기억과의 연결 (회상·연상)
    □ 의도와 가면의 차이 (속마음 vs 표정)
 
-6. 행동 디테일 + 씬 전환 (씬당 200~300자)
+6. 행동 디테일 + 씬 전환
    □ 캐릭터별 고유 행동 패턴 표현
    □ 손짓·시선 방향·호흡·자세
    □ 다음 씬으로의 자연스러운 전환
 
-★ 위 6개 항목 합계 = 씬당 평균 1,500자
-★ 회차 3~4씬 = 5,000~6,000자 자동 보장
+[씬 타입별 차등 규칙]
+
+▶ 첫 등장(first_appearance) / 첫 만남(first_meeting) / 관능(intimacy) / 이별(breakup) / 폭로(reveal_or_twist)
+   → 6개 항목 모두 풀 적용. 1,400~2,000자.
+   → 외모/감각/내면 독백 비중 ↑.
+
+▶ 표준 씬(standard) / 갈등(conflict) / 첫 데이트(first_date)
+   → 6개 항목 균형 적용. 1,200~1,700자.
+
+▶ 일상(daily_routine) / 정보 전달(exposition) / 장면 전환(transition)
+   → 항목 3·5는 압축 가능. 700~1,200자.
+   → 외모 묘사·내면 독백 최소화. 행동·대사 중심.
+
+★ 회차 3~4씬 합산 = 4,500~6,500자. 씬 타입에 따라 자동 분배.
+★ 일상 씬을 1,500자로 늘리지 말 것 — 독자 피로 유발.
+★ 첫 등장/관능 씬을 800자로 압축하지 말 것 — 임팩트 손실.
 """.strip()
+
+
+# =================================================================
+# [2-2-B] CONTEXT-AWARE DESCRIPTION SYSTEM (v2.6.4 신규)
+# 첫 등장 풀 묘사 / 재등장 압축 / 씬 타입별 강도 차등
+# =================================================================
+
+# ── 씬 타입 11종 정의 ──
+# 키 = 내부 식별자, 값 = 한국어 라벨 + 묘사 강도(weight) + 권장 분량(자) + 핵심 가이드
+SCENE_TYPES = {
+    "first_appearance": {
+        "label": "캐릭터 첫 등장",
+        "weight": 1.4,
+        "scene_chars": (1500, 1900),
+        "guide": "외모/패션/분위기 풀 묘사 + 첫인상 임팩트 + 직업 디테일 노출",
+    },
+    "first_meeting": {
+        "label": "두 인물의 첫 만남",
+        "weight": 1.4,
+        "scene_chars": (1500, 1900),
+        "guide": "양쪽 시선 교차 + 첫인상의 어긋남/끌림 + 공간 분위기",
+    },
+    "first_date": {
+        "label": "첫 데이트/단둘이 첫 시간",
+        "weight": 1.3,
+        "scene_chars": (1400, 1800),
+        "guide": "공간 디테일 + 작은 신체 접촉 가능성 + 대사 행간의 떨림",
+    },
+    "intimacy": {
+        "label": "친밀/관능 씬",
+        "weight": 1.5,
+        "scene_chars": (1600, 2100),
+        "guide": "감각(촉각·청각·체온) 밀도 + 호흡·정적 + 내면 떨림",
+    },
+    "conflict": {
+        "label": "갈등/대치/싸움",
+        "weight": 1.2,
+        "scene_chars": (1300, 1700),
+        "guide": "긴장 묘사 + 대사 응수 + 시선·자세의 압력 + 손/호흡 디테일",
+    },
+    "breakup_or_separation": {
+        "label": "이별/결별/분리",
+        "weight": 1.3,
+        "scene_chars": (1400, 1800),
+        "guide": "여운·정적 비중 ↑ + 마지막 시선/문장의 무게 + 환경 변화 묘사",
+    },
+    "reveal_or_twist": {
+        "label": "비밀 폭로/반전",
+        "weight": 1.3,
+        "scene_chars": (1400, 1800),
+        "guide": "직전 빌드업 + 폭로 순간의 정적 + 직후 인물별 반응 차이",
+    },
+    "daily_routine": {
+        "label": "일상 루틴",
+        "weight": 0.85,
+        "scene_chars": (900, 1200),
+        "guide": "압축 묘사 + 캐릭터 습관 1~2개만 + 다음 씬 진입 빠르게",
+    },
+    "exposition": {
+        "label": "정보 전달/설명",
+        "weight": 0.8,
+        "scene_chars": (800, 1100),
+        "guide": "대화·행동에 정보 녹이기 + 묘사 최소화 + 독자 피로 회피",
+    },
+    "transition": {
+        "label": "장면 전환/이동",
+        "weight": 0.7,
+        "scene_chars": (700, 1000),
+        "guide": "공간 이동 + 시간 압축 + 다음 씬 진입 예고만",
+    },
+    "standard": {
+        "label": "표준 씬",
+        "weight": 1.0,
+        "scene_chars": (1200, 1700),
+        "guide": "미장센 6항목 균형 적용",
+    },
+}
+
+
+# ── 장르별 묘사 우선순위 5종 ──
+GENRE_DESCRIPTION_PRIORITY = {
+    "치정 로맨스": {
+        "priority": ["감정 온도", "시선·접촉", "공간 분위기", "내면 균열", "외모 디테일"],
+        "tone": "감각적·관능적 밀도 ↑. 정적·여백 활용. 직설보다 행간.",
+    },
+    "로맨스": {
+        "priority": ["감정 온도", "대사 행간", "공간 분위기", "외모 디테일", "내면 떨림"],
+        "tone": "따뜻한 디테일 + 작은 행동의 의미화. 호흡 가볍게.",
+    },
+    "로맨스판타지": {
+        "priority": ["세계관 디테일", "외모/의상", "공간 분위기", "감정 온도", "권력 구도"],
+        "tone": "이세계 비주얼 풍부. 의상·궁정 묘사 ↑. 우아한 문체.",
+    },
+    "현대판타지": {
+        "priority": ["능력/스탯", "공간 디테일", "행동 임팩트", "외모 간결", "감정 절제"],
+        "tone": "건조·간결. 행동·결과 중심. 묘사보다 전개 속도.",
+    },
+    "스릴러": {
+        "priority": ["공간 압박감", "감각(소리·정적)", "시선·관찰", "내면 의심", "외모 단서"],
+        "tone": "정적·긴장 ↑. 시각/청각 디테일 정밀. 내면 독백 의심 가득.",
+    },
+}
+
+
+# ── Lovely Moments DB (장르별 추천 모먼트 풀) ──
+# 회차마다 다르게 추천하기 위한 후보 풀. ep_number를 시드로 회전 추출.
+LOVELY_MOMENTS = {
+    "치정 로맨스": [
+        "손목 잡힘 — 강제 멈춤 후 시선 교차",
+        "옷매무새 정리 — 상대가 무심히 손을 뻗는 순간",
+        "벽에 밀착 — 도망갈 곳 없는 거리",
+        "귓가의 속삭임 — 의미보다 호흡이 먼저 닿음",
+        "손등 위 손 — 떼지 않는 1초의 정적",
+        "차 안의 침묵 — 비 오는 창, 와이퍼 소리만",
+        "어깨에 떨어진 머리카락 — 손가락으로 걷어내기",
+        "엘리베이터 둘만 — 층 표시등 빛 + 좁아진 거리",
+        "넥타이 매주기 — 핑계 같은 가까움",
+        "젖은 머리 수건질 — 보호하는 척하는 손",
+        "취한 채 기댐 — 의식 없는 척, 의식하는 호흡",
+        "문 닫히기 직전 손 — 잡을 수도 보낼 수도",
+        "거울 너머 시선 — 직접 보지 못하는 응시",
+        "비 맞는 길에서 — 우산 하나, 어깨 닿음",
+        "문자 답장 끊김 — 새벽 3시의 점멸",
+        "이름 부름 — 처음으로 직함이 빠진 순간",
+    ],
+    "로맨스": [
+        "함께 쓰는 우산 — 한쪽 어깨가 젖어가는 배려",
+        "카페 창가 자리 — 같은 음악에 동시에 고개를 듦",
+        "도서관에서 빌린 책 속 메모",
+        "택시 안에서 졸다가 어깨에 기댐",
+        "택배 박스를 함께 옮기는 손",
+        "출근길 같은 지하철 — 마주친 짧은 미소",
+        "장보기 동행 — 카트 속 취향의 겹침",
+        "산책길 발걸음 맞추기",
+        "사진 찍어주기 — 카메라 너머의 시선",
+        "길 잃은 길에서 손 잡기",
+        "서로의 가족 이야기를 처음 꺼내는 저녁",
+        "퇴근 후 기다리는 차 한 대",
+    ],
+    "로맨스판타지": [
+        "황궁 정원 산책 — 달빛 아래 두 그림자",
+        "검술 훈련 중 손목 잡힘 — 스승과 제자의 경계",
+        "무도회 첫 곡 — 모두의 시선 속 단둘",
+        "독을 대신 마셔주는 잔",
+        "외투를 어깨에 둘러주는 손",
+        "마법진 안에서의 강제 결속",
+        "왕좌 옆 자리 권유 — 거절도 수락도 위험한",
+        "비밀 통로에서의 도망 — 손 놓지 마",
+        "약혼자의 머리에 꽂아주는 머리핀",
+        "전장에서 돌아온 첫 만남",
+    ],
+    "현대판타지": [
+        "전투 후 상처 치유 — 무뚝뚝한 손길",
+        "스킬 발동 직전 등 맞대기",
+        "랭킹전 직전 가벼운 어깨 두드림",
+        "파티원 회식 — 평소엔 안 짓는 표정",
+        "아이템 양보 — 말없는 호의",
+    ],
+    "스릴러": [
+        "어두운 복도에서 손 잡기 — 같이 있다는 신호",
+        "방탄조끼 끈 매주기 — 죽지 말라는 무언",
+        "현장 감식 중 마주친 시선",
+        "심문실 유리 너머 — 같은 편이지만 닿을 수 없음",
+        "도망친 다음 날 — 무사하냐는 한 줄 메시지",
+        "차 안 잠복 — 보온병 하나, 둘이 마심",
+    ],
+}
+
+
+# ── 헬퍼: 장르 우선순위 조회 ──
+def get_genre_description_priority(genre):
+    """장르명을 받아 묘사 우선순위 + 톤 가이드 텍스트 블록 반환."""
+    if not genre:
+        return ""
+    # 장르명 정규화 (부분 일치 허용 — 더 긴 키부터 우선 매칭)
+    # "로맨스판타지" 입력 시 "로맨스"가 먼저 잡히는 것을 방지
+    genre_clean = str(genre).strip()
+    matched = None
+    sorted_keys = sorted(GENRE_DESCRIPTION_PRIORITY.keys(), key=lambda k: -len(k))
+    for key in sorted_keys:
+        if key in genre_clean or genre_clean in key:
+            matched = key
+            break
+    if not matched:
+        return ""
+    data = GENRE_DESCRIPTION_PRIORITY[matched]
+    priority_str = " > ".join(data["priority"])
+    return f"""[★ 장르별 묘사 우선순위 — {matched} ★]
+- 묘사 비중 우선순위: {priority_str}
+- 톤 가이드: {data['tone']}
+- 위 우선순위가 높은 항목일수록 더 길고 정교하게 묘사할 것.
+""".strip()
+
+
+# ── 헬퍼: 캐릭터별 첫 등장 회차 매핑 ──
+def get_character_first_episodes(episode_plots):
+    """모든 회차 플롯을 스캔해 각 캐릭터의 첫 등장 회차 번호를 반환.
+
+    Returns:
+        dict: {"한시호": 1, "강현우": 3, ...}
+    """
+    if not episode_plots:
+        return {}
+    first_eps = {}
+    # int 키 정렬 (str 키도 안전하게 처리)
+    try:
+        sorted_eps = sorted(episode_plots.keys(), key=lambda x: int(x))
+    except (ValueError, TypeError):
+        sorted_eps = sorted(episode_plots.keys())
+
+    for ep in sorted_eps:
+        plot = episode_plots.get(ep, {})
+        if not isinstance(plot, dict):
+            continue
+        # development.scenes[].characters[]
+        dev = plot.get("development", {}) or {}
+        scenes = dev.get("scenes", []) or []
+        for scene in scenes:
+            if not isinstance(scene, dict):
+                continue
+            chars = scene.get("characters", []) or []
+            for c in chars:
+                if not c:
+                    continue
+                name = str(c).strip()
+                if not name:
+                    continue
+                if name not in first_eps:
+                    try:
+                        first_eps[name] = int(ep)
+                    except (ValueError, TypeError):
+                        first_eps[name] = ep
+    return first_eps
+
+
+# ── 헬퍼: 씬 타입 자동 분류 (키워드 휴리스틱) ──
+def detect_scene_types(episode_plot_dict, ep_number=None):
+    """회차 플롯 dict를 받아 씬별 타입 리스트 반환.
+
+    Args:
+        episode_plot_dict: {"development": {"scenes": [...]}, ...}
+        ep_number: 회차 번호 (첫 등장 판정 보조용)
+
+    Returns:
+        list of dict: [{"index": 1, "type": "first_meeting", "label": "..."}, ...]
+    """
+    if not episode_plot_dict or not isinstance(episode_plot_dict, dict):
+        return []
+    dev = episode_plot_dict.get("development", {}) or {}
+    scenes = dev.get("scenes", []) or []
+    if not scenes:
+        return []
+
+    # 키워드 휴리스틱 사전
+    keyword_map = [
+        # (씬 타입, 키워드 리스트)
+        ("intimacy",
+         ["키스", "포옹", "안다", "안기", "관능", "정사", "잠자리", "침대", "샤워",
+          "벗다", "옷매무새", "체온", "숨결", "맨살"]),
+        ("first_meeting",
+         ["첫 만남", "처음 만나", "처음 마주", "처음 본다", "처음으로 만난",
+          "초면", "처음 대면"]),
+        ("first_date",
+         ["첫 데이트", "단둘이", "둘만의", "처음 단 둘", "첫 식사", "첫 외출"]),
+        ("first_appearance",
+         ["첫 등장", "처음 등장", "등장한다"]),
+        ("breakup_or_separation",
+         ["이별", "헤어진다", "결별", "떠난다", "마지막 인사", "작별",
+          "관계 끝", "끝났다"]),
+        ("reveal_or_twist",
+         ["폭로", "비밀 밝혀", "정체 드러", "진실 밝혀", "반전", "들통",
+          "들킨다", "발각"]),
+        ("conflict",
+         ["갈등", "대치", "싸움", "다툰다", "언쟁", "충돌", "맞선다",
+          "추궁", "비난", "분노"]),
+        ("daily_routine",
+         ["일상", "출근", "퇴근", "아침 식사", "저녁 식사", "씻는다",
+          "잠든다", "루틴"]),
+        ("exposition",
+         ["설명", "회상", "과거 회상", "보고", "브리핑", "정보 전달"]),
+        ("transition",
+         ["이동", "도착", "출발", "장면 전환", "다음 장소", "차로"]),
+    ]
+
+    result = []
+    for idx, scene in enumerate(scenes, start=1):
+        if not isinstance(scene, dict):
+            result.append({"index": idx, "type": "standard",
+                           "label": SCENE_TYPES["standard"]["label"]})
+            continue
+        # 씬 본문 후보 필드 합치기
+        text = " ".join([
+            str(scene.get("summary", "")),
+            str(scene.get("content", "")),
+            str(scene.get("description", "")),
+            str(scene.get("note", "")),
+            str(scene.get("title", "")),
+            str(scene.get("location", "")),
+            str(scene.get("action", "")),
+        ]).lower()
+
+        matched_type = None
+        for stype, keywords in keyword_map:
+            for kw in keywords:
+                if kw.lower() in text:
+                    matched_type = stype
+                    break
+            if matched_type:
+                break
+
+        # 첫 등장 보조 판정: ep_number == 1 이고 첫 씬이면 first_appearance 우선
+        if not matched_type and ep_number == 1 and idx == 1:
+            matched_type = "first_appearance"
+
+        if not matched_type:
+            matched_type = "standard"
+
+        result.append({
+            "index": idx,
+            "type": matched_type,
+            "label": SCENE_TYPES.get(matched_type, SCENE_TYPES["standard"])["label"],
+        })
+    return result
+
+
+# ── 헬퍼: 컨텍스트 인식 묘사 블록 빌더 ──
+def build_contextual_description_block(characters_full_data, ep_number,
+                                       char_first_eps, scene_types,
+                                       genre=""):
+    """v2.6.4 핵심 — 첫 등장 풀 / 재등장 압축 / 씬 타입별 강도 차등.
+
+    Args:
+        characters_full_data: 이번 회차 등장 캐릭터들의 바이블 풀 데이터 리스트
+        ep_number: 현재 회차 번호 (int)
+        char_first_eps: {"이름": 첫등장회차번호} dict
+        scene_types: detect_scene_types() 결과 리스트
+        genre: 장르명 (장르별 우선순위 적용)
+
+    Returns:
+        str: 집필 프롬프트에 주입할 컨텍스트 묘사 블록 전체
+    """
+    if not characters_full_data:
+        return ""
+
+    blocks = []
+
+    # ── 1. 캐릭터별 첫 등장 / 재등장 분기 ──
+    char_descriptions = []
+    for char in characters_full_data:
+        if not isinstance(char, dict):
+            continue
+        name = char.get("name", "")
+        if not name:
+            continue
+
+        # 첫 등장 판정
+        first_ep = char_first_eps.get(name) if char_first_eps else None
+        is_first_in_this_ep = (first_ep is None) or (
+            isinstance(first_ep, int) and isinstance(ep_number, int)
+            and first_ep == ep_number
+        )
+
+        if is_first_in_this_ep:
+            # ── 풀 묘사 모드 ──
+            lines = [f"== {name} [첫 등장 — 풀 묘사 모드] =="]
+            age = char.get("age", "")
+            occ = char.get("occupation", char.get("role", ""))
+            if age or occ:
+                lines.append(f"기본 정보: {age}{'세' if age and not str(age).endswith('세') else ''}, {occ}".strip())
+
+            appearance = char.get("appearance", "")
+            if appearance:
+                lines.append(f"[외모/패션 — 풀 묘사 필수, 250자 내외]\n  {appearance}")
+
+            speech = char.get("speech_patterns") or char.get("말투") or char.get("말투_패턴")
+            if speech:
+                patterns = _format_speech_patterns(speech)
+                if patterns:
+                    lines.append(f"[말투 패턴 — 첫 대사에서 즉시 각인]\n{patterns}")
+
+            action = char.get("action_patterns") or char.get("행동_패턴") or char.get("행동패턴")
+            if action:
+                lines.append(f"[행동 패턴 — 첫 등장 씬에 1회 이상 노출] {action}")
+
+            flaw = char.get("flaw") or char.get("결핍") or char.get("비밀")
+            if flaw:
+                lines.append(f"[결핍/비밀 — 미세하게 암시] {flaw}")
+
+            desire = char.get("desire") or char.get("욕망") or char.get("목표")
+            if desire:
+                lines.append(f"[욕망/목표] {desire}")
+
+            arc = char.get("arc") or char.get("character_arc") or char.get("캐릭터_아크")
+            if arc:
+                lines.append(f"[캐릭터 아크 — 현재 단계 위치] {arc}")
+
+            lines.append("★ 이 캐릭터는 이번 회차에 처음 등장. 외모/패션/말투를 풀 묘사로 각인시킬 것.")
+            char_descriptions.append("\n".join(lines))
+        else:
+            # ── 재등장 압축 모드 ──
+            lines = [f"== {name} [재등장 — 압축 모드, EP{first_ep} 첫 등장] =="]
+            # 외모는 식별 포인트 1~2가지만
+            appearance = char.get("appearance", "")
+            if appearance:
+                # 외모 텍스트가 길면 앞 80자만
+                short_app = appearance[:80] + ("…" if len(appearance) > 80 else "")
+                lines.append(f"식별 포인트: {short_app}")
+
+            # 말투/행동은 핵심 1줄
+            speech = char.get("speech_patterns") or char.get("말투") or char.get("말투_패턴")
+            if speech:
+                if isinstance(speech, list) and speech:
+                    lines.append(f"말투 키워드: {speech[0]}")
+                elif isinstance(speech, str):
+                    lines.append(f"말투 키워드: {speech[:60]}")
+
+            action = char.get("action_patterns") or char.get("행동_패턴") or char.get("행동패턴")
+            if action:
+                lines.append(f"행동 키워드: {str(action)[:60]}")
+
+            arc = char.get("arc") or char.get("character_arc") or char.get("캐릭터_아크")
+            if arc:
+                lines.append(f"현재 아크: {str(arc)[:80]}")
+
+            lines.append("★ 재등장 — 외모 풀 묘사 금지. 행동/말투/현재 심리 변화에 집중.")
+            char_descriptions.append("\n".join(lines))
+
+    if char_descriptions:
+        blocks.append("[★ 등장 캐릭터 — 컨텍스트별 묘사 모드 ★]\n\n" +
+                      "\n\n".join(char_descriptions))
+
+    # ── 2. 씬 타입별 강도 가이드 ──
+    if scene_types:
+        scene_lines = ["[★ 이번 회차 씬별 묘사 강도 가이드 ★]"]
+        for sinfo in scene_types:
+            stype = sinfo.get("type", "standard")
+            sdef = SCENE_TYPES.get(stype, SCENE_TYPES["standard"])
+            label = sdef["label"]
+            chars_min, chars_max = sdef["scene_chars"]
+            weight = sdef["weight"]
+            guide = sdef["guide"]
+            scene_lines.append(
+                f"  씬{sinfo.get('index', '?')} [{label}] "
+                f"권장 {chars_min}~{chars_max}자 (강도 ×{weight})\n"
+                f"    → {guide}"
+            )
+        scene_lines.append(
+            "★ 위 강도에 맞춰 씬별 분량/묘사 밀도를 차등 적용. "
+            "일상/이동 씬은 간결, 첫 등장/관능/이별 씬은 밀도 ↑."
+        )
+        blocks.append("\n".join(scene_lines))
+
+    # ── 3. 장르별 우선순위 ──
+    if genre:
+        genre_block = get_genre_description_priority(genre)
+        if genre_block:
+            blocks.append(genre_block)
+
+    # ── 4. Lovely Moments 추천 (회차별 회전) ──
+    if genre and ep_number:
+        # 장르 매칭 — 더 긴 키부터 우선 (로맨스판타지 vs 로맨스 충돌 방지)
+        moments_pool = None
+        sorted_lm_keys = sorted(LOVELY_MOMENTS.keys(), key=lambda k: -len(k))
+        for key in sorted_lm_keys:
+            if key in str(genre) or str(genre) in key:
+                moments_pool = LOVELY_MOMENTS[key]
+                break
+        if moments_pool:
+            n = len(moments_pool)
+            # ep_number를 시드로 3개 회전 추출 (회차마다 다르게)
+            try:
+                ep_int = int(ep_number)
+            except (ValueError, TypeError):
+                ep_int = 1
+            picks = []
+            for i in range(3):
+                idx = (ep_int * 3 + i) % n
+                picks.append(moments_pool[idx])
+            blocks.append(
+                "[★ 이번 회차 Lovely Moment 후보 (3개 중 어울리는 1~2개 자연스럽게 활용) ★]\n" +
+                "\n".join([f"  · {m}" for m in picks])
+            )
+
+    if not blocks:
+        return ""
+
+    return "\n\n".join(blocks)
 
 
 # =================================================================
@@ -2029,8 +2534,10 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
                                intimacy_schedule=None,
                                narrative_tone="",
                                profession_blocks="",
-                               characters_full_data=None):
-    """회차 원고 집필. v2.6.3: 캐릭터 풀 데이터 + 미장센 강제 체크리스트."""
+                               characters_full_data=None,
+                               char_first_eps=None,
+                               scene_types=None):
+    """회차 원고 집필. v2.6.4: 컨텍스트 인식 묘사 (첫 등장 풀/재등장 압축/씬 타입 차등)."""
     tags_block = get_formula_block(formula_tags or [])
     motif_block = get_motif_block(primary_motif, secondary_motif)
     persona_block = get_reader_persona_block(target_persona)
@@ -2042,8 +2549,20 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
     tone_block = get_narrative_tone_block(narrative_tone) if narrative_tone else ""
     # v2.6 신규 — 직업 블록
     prof_section = f"\n\n{profession_blocks}\n" if profession_blocks else ""
-    # v2.6.3 신규 — 캐릭터 풀 데이터 블록
-    char_full_block = build_character_full_block(characters_full_data) if characters_full_data else ""
+    # v2.6.4 신규 — 컨텍스트 인식 묘사 블록 (첫 등장 풀 / 재등장 압축 / 씬 타입 차등)
+    if characters_full_data and char_first_eps is not None and scene_types is not None:
+        contextual_desc_block = build_contextual_description_block(
+            characters_full_data=characters_full_data,
+            ep_number=ep_number,
+            char_first_eps=char_first_eps,
+            scene_types=scene_types,
+            genre=genre,
+        )
+    elif characters_full_data:
+        # v2.6.3 폴백 — 컨텍스트 인자가 없으면 기존 풀 데이터 블록
+        contextual_desc_block = build_character_full_block(characters_full_data)
+    else:
+        contextual_desc_block = ""
     lp = get_platform_length(platform)
     min_len = lp["min"]
     max_len = lp["max"]
@@ -2072,7 +2591,7 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
 {character_flags}
 {prof_section}
 
-{char_full_block}
+{contextual_desc_block}
 
 {MISE_EN_SCENE_CHECKLIST}
 
