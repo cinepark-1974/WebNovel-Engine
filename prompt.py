@@ -630,6 +630,138 @@ ABSOLUTE_LIMITS = """
 강압적 긴장, 복수 · 학살, 흑화, 도덕적 회색)는 서사적 기능이 있을 경우 자유롭게 집필 가능.
 """.strip()
 
+
+# =================================================================
+# [2-2-A] CHARACTER FULL DATA + MISE-EN-SCENE (v2.6.3 신규)
+# 캐릭터 바이블 풀 데이터를 집필에 강제 주입 + 미장센 강제 체크리스트
+# =================================================================
+
+def _format_speech_patterns(speech_data):
+    """말투 패턴 데이터를 텍스트 리스트로."""
+    if not speech_data:
+        return ""
+    if isinstance(speech_data, list):
+        return "\n".join([f"  - {s}" for s in speech_data if s])
+    if isinstance(speech_data, str):
+        return f"  - {speech_data}"
+    return ""
+
+
+def build_character_full_block(characters_full_data):
+    """등장 캐릭터의 바이블 풀 데이터를 집필 프롬프트용 블록으로.
+    
+    각 캐릭터의 외모/말투/행동/캐릭터 아크 등 모든 디테일을
+    집필 시 강제로 묘사에 활용하도록 풀 데이터 주입.
+    """
+    if not characters_full_data:
+        return ""
+    
+    blocks = []
+    for char in characters_full_data:
+        if not isinstance(char, dict):
+            continue
+        name = char.get("name", "")
+        if not name:
+            continue
+        
+        lines = [f"== {name}" + (f" ({char.get('age', '')}세, {char.get('occupation', char.get('role', ''))})" if char.get('age') or char.get('occupation') or char.get('role') else "") + " =="]
+        
+        # 외모/패션
+        appearance = char.get("appearance", "")
+        if appearance:
+            lines.append(f"[외모/패션] {appearance}")
+        
+        # 말투 패턴
+        speech = char.get("speech_patterns") or char.get("말투") or char.get("말투_패턴")
+        if speech:
+            patterns = _format_speech_patterns(speech)
+            if patterns:
+                lines.append(f"[말투 패턴]\n{patterns}")
+        
+        # 행동 패턴
+        action = char.get("action_patterns") or char.get("행동_패턴") or char.get("행동패턴")
+        if action:
+            lines.append(f"[행동 패턴] {action}")
+        
+        # 결핍/비밀
+        flaw = char.get("flaw") or char.get("결핍") or char.get("비밀")
+        if flaw:
+            lines.append(f"[결핍/비밀] {flaw}")
+        
+        # 욕망/목표
+        desire = char.get("desire") or char.get("욕망") or char.get("목표")
+        if desire:
+            lines.append(f"[욕망/목표] {desire}")
+        
+        # 캐릭터 아크
+        arc = char.get("arc") or char.get("character_arc") or char.get("캐릭터_아크")
+        if arc:
+            lines.append(f"[캐릭터 아크] {arc}")
+        
+        blocks.append("\n".join(lines))
+    
+    if not blocks:
+        return ""
+    
+    intro = """
+[★ 이번 회차 등장 캐릭터 풀 데이터 — 묘사에 반드시 활용 ★]
+
+아래 캐릭터들이 등장하는 모든 씬에서:
+- 외모/패션 묘사 1회 이상 (등장 시점)
+- 말투 패턴에 맞는 대사 작성
+- 행동 패턴 자연스럽게 표현 1회 이상
+- 캐릭터 아크 단계에 맞는 행동 선택
+- 결핍/비밀이 행동에 미치는 영향 표현
+
+★ 이 묘사를 빠뜨리면 캐릭터 평면화 + 분량 미달로 처리됨.
+""".strip()
+    
+    return intro + "\n\n" + "\n\n".join(blocks)
+
+
+MISE_EN_SCENE_CHECKLIST = """
+[★ 미장센 강제 체크리스트 — 각 씬 1,200~1,700자 자동 보장 ★]
+
+각 씬에서 다음 6개 묘사 항목을 모두 포함할 것.
+한 항목이라도 비면 분량 미달 + 미장센 부족으로 처리됨.
+
+1. 공간 디테일 (씬당 200~300자)
+   □ 어디인가 — 구체적 장소명·층수·구역
+   □ 무엇이 보이는가 — 시각적 디테일 (색·재질·구조)
+   □ 무엇이 들리는가 — 소리 (배경음·정적·발걸음)
+   □ 무엇이 느껴지는가 — 온도·습도·냄새·공기
+
+2. 시간/조명 묘사 (씬당 50~100자)
+   □ 몇 시인가 — 구체적 시각
+   □ 빛은 어떤가 — 자연광/인공광/그림자/계절감
+
+3. 등장 캐릭터 외모/소품 (등장 시 200~250자)
+   □ 캐릭터 바이블의 외모/패션 활용
+   □ 직업 공간/소품 디테일 (Profession Pack 활용)
+   □ 표정의 미세한 변화
+
+4. 대사 + 비언어 신호 (씬당 500~700자)
+   □ 5턴 이상의 자연스러운 대화
+   □ 캐릭터별 말투 패턴 준수
+   □ 대사 사이의 침묵·시선·작은 행동
+
+5. POV 캐릭터 내면 독백 (씬당 200~400자)
+   □ 감각적 즉시 반응 (소름·체온·심박)
+   □ 과거 기억과의 연결 (회상·연상)
+   □ 의도와 가면의 차이 (속마음 vs 표정)
+
+6. 행동 디테일 + 씬 전환 (씬당 200~300자)
+   □ 캐릭터별 고유 행동 패턴 표현
+   □ 손짓·시선 방향·호흡·자세
+   □ 다음 씬으로의 자연스러운 전환
+
+★ 위 6개 항목 합계 = 씬당 평균 1,500자
+★ 회차 3~4씬 = 5,000~6,000자 자동 보장
+""".strip()
+
+
+# =================================================================
+
 # =================================================================
 # [2-3] READER PERSONAS — 강종현(2024) 수용자 연구 + KOCCA 2020/2022 데이터
 # =================================================================
@@ -1896,8 +2028,9 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
                                ep_number=0, total_eps=50,
                                intimacy_schedule=None,
                                narrative_tone="",
-                               profession_blocks=""):
-    """회차 원고 집필. v2.6: Profession Pack 블록 주입."""
+                               profession_blocks="",
+                               characters_full_data=None):
+    """회차 원고 집필. v2.6.3: 캐릭터 풀 데이터 + 미장센 강제 체크리스트."""
     tags_block = get_formula_block(formula_tags or [])
     motif_block = get_motif_block(primary_motif, secondary_motif)
     persona_block = get_reader_persona_block(target_persona)
@@ -1909,6 +2042,8 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
     tone_block = get_narrative_tone_block(narrative_tone) if narrative_tone else ""
     # v2.6 신규 — 직업 블록
     prof_section = f"\n\n{profession_blocks}\n" if profession_blocks else ""
+    # v2.6.3 신규 — 캐릭터 풀 데이터 블록
+    char_full_block = build_character_full_block(characters_full_data) if characters_full_data else ""
     lp = get_platform_length(platform)
     min_len = lp["min"]
     max_len = lp["max"]
@@ -1936,6 +2071,11 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
 
 {character_flags}
 {prof_section}
+
+{char_full_block}
+
+{MISE_EN_SCENE_CHECKLIST}
+
 {pacing_block}
 
 {intimacy_directive}
