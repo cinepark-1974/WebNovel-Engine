@@ -196,7 +196,7 @@ st.markdown("""
 MODEL_OPUS = "claude-opus-4-20250514"
 MODEL_SONNET = "claude-sonnet-4-20250514"
 MAX_TOKENS_ARC = 12000
-MAX_TOKENS_EPISODE = 8000
+MAX_TOKENS_EPISODE = 16000   # v2.6.2: 8000→16000, 5,000~6,500자 안정 생성을 위해 2배
 MAX_TOKENS_STRUCTURE = 6000
 MAX_TOKENS_ANALYSIS = 4000
 
@@ -1652,13 +1652,82 @@ with main_tabs[2]:
                         )
 
                     if result:
+                        # v2.6.2: 분량 자동 검증
+                        platform_spec = PLATFORM_LENGTH.get(platform, PLATFORM_LENGTH["카카오페이지"])
+                        min_required = platform_spec["min"]
+                        target_len = platform_spec["target"]
+                        result_len = len(result)
+
                         st.session_state.episodes_19[ep_write] = result
                         summary_raw = call_claude(
                             build_episode_summary_prompt(result, ep_write),
                             MAX_TOKENS_ANALYSIS,
                         )
                         st.session_state.episode_summaries[ep_write] = summary_raw.strip()
-                        st.success(f"✅ EP{ep_write} 집필 완료 ({len(result)}자)")
+
+                        # 분량 충족 여부 표시
+                        if result_len < min_required:
+                            shortage = min_required - result_len
+                            st.error(
+                                f"⚠️ EP{ep_write} 분량 미달: {result_len:,}자 "
+                                f"(목표 {target_len:,}자, 최소 {min_required:,}자, "
+                                f"부족 {shortage:,}자)"
+                            )
+                            st.warning(
+                                f"💡 **분량 미달 원인:**\n"
+                                f"- LLM이 짧게 종결한 경향. 아래 '분량 보완 재집필' 사용 권장."
+                            )
+                            # 분량 보완 재집필 버튼
+                            if st.button(
+                                f"🔁 EP{ep_write} 분량 보완 재집필 (현재 {result_len:,}자 → {target_len:,}자 목표)",
+                                type="primary",
+                                key=f"expand_{ep_write}",
+                            ):
+                                expand_prompt = f"""다음 회차 원고는 분량 미달입니다 ({result_len}자, 목표 {target_len}자).
+원본의 서사·캐릭터·대사·플롯을 그대로 유지하면서, 다음 방식으로 분량을 늘려서 재작성하세요:
+
+1. 각 씬의 시작 묘사 보강 (배경·인물 진입)
+2. 대사 직후 반응(표정·생각·내면 독백) 추가
+3. 감각적 디테일 (시각·청각·후각·촉각) 풀어쓰기
+4. 인물 간 비언어적 신호 (시선·호흡·정적·손짓) 묘사 추가
+5. 회상·복선 자연스럽게 녹이기
+
+★ 최소 {min_required}자 이상, 목표 {target_len}자
+★ 원본의 사건·대사·전개 변경 금지 (디테일만 보강)
+★ 첫 줄 회차 제목 그대로 유지
+
+[원본 원고]
+{result}
+
+[출력] 분량이 늘어난 재집필 원고 텍스트만. 첫 줄 회차 제목 유지.""".strip()
+
+                                with st.spinner(f"EP{ep_write} 분량 보완 중 (Opus)..."):
+                                    expanded = call_claude_opus(
+                                        expand_prompt,
+                                        MAX_TOKENS_EPISODE,
+                                        system=build_system_prompt(
+                                            narrative_tone=concept.get("narrative_tone", ""),
+                                            for_episode_write=True,
+                                        ),
+                                    )
+                                if expanded:
+                                    st.session_state.episodes_19[ep_write] = expanded
+                                    st.success(
+                                        f"✅ EP{ep_write} 분량 보완 완료: "
+                                        f"{result_len:,}자 → {len(expanded):,}자"
+                                    )
+                                    st.rerun()
+                        elif result_len > platform_spec["max"]:
+                            st.warning(
+                                f"⚠️ EP{ep_write} 분량 초과: {result_len:,}자 "
+                                f"(최대 {platform_spec['max']:,}자)"
+                            )
+                            st.success(f"✅ EP{ep_write} 집필 완료 ({result_len:,}자)")
+                        else:
+                            st.success(
+                                f"✅ EP{ep_write} 집필 완료 — "
+                                f"{result_len:,}자 (목표 {target_len:,}자, 적정 분량)"
+                            )
 
                 if ep_write in st.session_state.episodes_19:
                     text = st.session_state.episodes_19[ep_write]
