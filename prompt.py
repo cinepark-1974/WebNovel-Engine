@@ -1,10 +1,76 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.6.4 — prompt.py
+👖 BLUE JEANS WEB NOVEL ENGINE v3.0 — prompt.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 v2.6.4: Context-Aware Description (첫 등장 풀 / 재등장 압축 / 씬 타입 차등)
+v3.0:   Phase A 데이터 모듈 통합 + Phase B 신규 블록 빌더 5종
+        (formula_strategy / motif / character_role / mind_flow_arc / market_viability)
 © 2026 BLUE JEANS PICTURES
 """
+
+# =================================================================
+# [v3.0] Phase A 데이터 모듈 import (선택적 — 실패해도 v2.6.4 동작 유지)
+# =================================================================
+try:
+    from data_motifs import (
+        RELATIONSHIP_MOTIFS_DICT,
+        ROMANCE_FORMULAS,
+        MOVEMENT_NARRATIVE_PATTERNS,
+        HIGH_RATING_ROMANCE_MOTIFS,
+    )
+    _V3_MOTIFS_AVAILABLE = True
+except ImportError:
+    RELATIONSHIP_MOTIFS_DICT = {}
+    ROMANCE_FORMULAS = {}
+    MOVEMENT_NARRATIVE_PATTERNS = {}
+    HIGH_RATING_ROMANCE_MOTIFS = {}
+    _V3_MOTIFS_AVAILABLE = False
+
+try:
+    from data_character import (
+        CHARACTER_ROLE_TAXONOMY,
+        MOE_ATTRIBUTES_25,
+        HEROINE_MIND_FLOW_PATTERNS,
+        HERO_MIND_FLOW_PATTERNS,
+        READER_CONSUMPTION_TIERS,
+        get_mind_flow_stage_for_episode,
+    )
+    _V3_CHARACTER_AVAILABLE = True
+except ImportError:
+    CHARACTER_ROLE_TAXONOMY = {}
+    MOE_ATTRIBUTES_25 = {}
+    HEROINE_MIND_FLOW_PATTERNS = {"stages": []}
+    HERO_MIND_FLOW_PATTERNS = {"stages": []}
+    READER_CONSUMPTION_TIERS = {}
+    get_mind_flow_stage_for_episode = lambda ep, total=42: {}
+    _V3_CHARACTER_AVAILABLE = False
+
+try:
+    from data_market import (
+        MARKET_DATA_2024,
+        calculate_market_viability_score,
+        validate_cliffhanger_distribution,
+    )
+    _V3_MARKET_AVAILABLE = True
+except ImportError:
+    MARKET_DATA_2024 = {}
+    calculate_market_viability_score = lambda *args, **kwargs: {"total": 0, "grade": "N/A"}
+    validate_cliffhanger_distribution = lambda *args, **kwargs: {"in_range": [], "out_of_range": []}
+    _V3_MARKET_AVAILABLE = False
+
+try:
+    from data_strategy import (
+        ROFAN_CREATION_STRATEGY,
+        HETEROTOPIA_FRAME,
+        POV_BLENDING_GUIDE,
+    )
+    _V3_STRATEGY_AVAILABLE = True
+except ImportError:
+    ROFAN_CREATION_STRATEGY = {}
+    HETEROTOPIA_FRAME = {}
+    POV_BLENDING_GUIDE = {}
+    _V3_STRATEGY_AVAILABLE = False
+
 
 # =================================================================
 # [1] SYSTEM PROMPT
@@ -2113,11 +2179,35 @@ def build_parse_brief_prompt(brief_text):
 
 
 def build_generate_concept_prompt(idea_text, genre=""):
-    """한 줄 아이디어에서 컨셉 카드 자동 생성."""
+    """한 줄 아이디어에서 컨셉 카드 자동 생성. v3.0: 신규 필드 자동 추론."""
     g_block = f"\n[장르]\n{genre}" if genre else ""
     primary_list = list(NARRATIVE_MOTIFS["primary"].keys())
     secondary_list = list(NARRATIVE_MOTIFS["secondary"].keys())
     persona_list = list(READER_PERSONAS.keys())
+    
+    # v3.0 신규 — 6 포뮬러, 23 모티프, 5 이동코드, 3 소비자 분화
+    formulas_list = list(ROMANCE_FORMULAS.keys()) if _V3_MOTIFS_AVAILABLE else []
+    motifs_list = list(RELATIONSHIP_MOTIFS_DICT.keys()) if _V3_MOTIFS_AVAILABLE else []
+    movement_list = list(MOVEMENT_NARRATIVE_PATTERNS.keys()) if _V3_MOTIFS_AVAILABLE else []
+    consumption_tiers = list(READER_CONSUMPTION_TIERS.keys()) if _V3_CHARACTER_AVAILABLE else []
+    
+    v3_block = ""
+    if _V3_MOTIFS_AVAILABLE and _V3_CHARACTER_AVAILABLE:
+        v3_block = f"""
+
+[v3.0 신규 분류 — 반드시 추론하여 채울 것]
+- formula_main (메인 포뮬러, 6종 중 1): {formulas_list}
+- formula_sub (보조 포뮬러, 6종 중 1, 없으면 빈 문자열)
+- movement_code (이동 코드, 5종 중 1, 해당 없으면 빈 문자열): {movement_list}
+- relationship_motifs (23 모티프 중 선택):
+  · primary: 23종 중 1 (메인 관계 동력)
+  · secondary: 23종 중 2~4개 (보조 라인)
+  · tertiary: 23종 중 0~3개 (배경 음영)
+- target_consumption_tier (소비자 분화, 1~2개): {consumption_tiers}
+- heroine_name (여주 이름 — protagonist.name 동일하게 채울 것. 마음 흐름 가이드용)
+
+23 관계성 모티프 목록: {motifs_list}"""
+    
     return f"""다음 아이디어를 기반으로 웹소설 컨셉 카드를 생성하세요.
 
 [아이디어]
@@ -2137,7 +2227,7 @@ def build_generate_concept_prompt(idea_text, genre=""):
   · target_persona: {persona_list} 중 하나
 - 주인공 동일시 전략 설계 (독자가 몰입할 수 있도록)
 - 주인공이 실리적/반동인물적 성향이면 is_antihero=true
-- 시놉시스 3~5문장
+- 시놉시스 3~5문장{v3_block}
 
 [JSON 출력]
 {{
@@ -2146,6 +2236,16 @@ def build_generate_concept_prompt(idea_text, genre=""):
   "primary_motif": "",
   "secondary_motif": "",
   "target_persona": "",
+  "formula_main": "",
+  "formula_sub": "",
+  "movement_code": "",
+  "relationship_motifs": {{
+    "primary": "",
+    "secondary": [],
+    "tertiary": []
+  }},
+  "target_consumption_tier": [],
+  "heroine_name": "",
   "protagonist": {{
     "name":"","age":0,"role":"","goal":"","need":"","fatal_flaw":"","is_antihero":false,
     "identification_strategy": {{
@@ -2415,8 +2515,38 @@ def build_plant_payoff_prompt(arc_text, characters, arc_type="core"):
 
 
 def build_character_bible_prompt(concept_card_json, profession_blocks=""):
-    """웹소설 경량 캐릭터 바이블 생성. v2.6: 직업 블록 주입."""
+    """웹소설 경량 캐릭터 바이블 생성. v2.6: 직업 블록 주입. v3.0: 9종 인물 역할 + 모에 속성 자동 분배."""
     prof_section = f"\n\n{profession_blocks}" if profession_blocks else ""
+    
+    # v3.0 신규 — 9종 인물 역할, 모에 25속성 안내
+    v3_block = ""
+    if _V3_CHARACTER_AVAILABLE:
+        roles_list = list(CHARACTER_ROLE_TAXONOMY.keys())
+        moe_appearance = list(MOE_ATTRIBUTES_25.get("외관", {}).keys())
+        moe_role = list(MOE_ATTRIBUTES_25.get("역할", {}).keys())
+        moe_personality = list(MOE_ATTRIBUTES_25.get("성격", {}).keys())
+        v3_block = f"""
+
+[v3.0 신규 — 캐릭터 메타정보 자동 분배]
+각 캐릭터에 다음 두 필드를 추가로 채울 것:
+
+1) narrative_role (9종 인물 역할 중 1, 캐릭터별로 반드시 다르게 분배):
+   {roles_list}
+   
+   ★ 평면화 방지 규칙: 한 작품의 모든 등장인물은 서로 다른 역할로 분배.
+   특히 메인 남주 vs 라이벌 남주들이 동일 역할을 갖지 말 것.
+   여주(protagonist)는 이 필드를 비울 수도 있음 (주인공은 역할 분류 대상 아님).
+
+2) moe_attributes (모에 속성, 캐릭터당 1~3개. "카테고리:속성명" 형식):
+   외관: {moe_appearance}
+   역할: {moe_role}
+   성격: {moe_personality}
+   
+   예시: ["성격:쿨데레", "역할:신비한_단골손님"] / ["성격:쿠데레", "역할:환생자"]
+   
+   ★ 캐릭터 차별화 규칙: 한 작품의 모든 인물의 모에 속성이 겹치지 않도록 분배.
+   특히 성격 속성(쿨데레/츤데레/얀데레 등)은 인물마다 다르게."""
+    
     return f"""[TASK] 웹소설 캐릭터 바이블 생성
 
 [컨셉 카드]
@@ -2440,14 +2570,42 @@ def build_character_bible_prompt(concept_card_json, profession_blocks=""):
 - 공간 디테일을 외모·소품 묘사에 활용
 - 직업적 스트레스를 결핍/비밀에 연결
 - 한국 맥락(계급·호칭·조직문화)을 반드시 반영
-- 금지 사항(forbidden)은 반드시 회피
+- 금지 사항(forbidden)은 반드시 회피{v3_block}
 
-[JSON 출력]
+[JSON 출력 — 각 캐릭터에 narrative_role, moe_attributes 필드 포함]
 {{
-  "protagonist": {{...}},
-  "love_interests": [{{...}},{{...}}],
-  "villain": {{...}},
-  "supporting": [{{...}}]
+  "protagonist": {{
+    "name": "", "age": 0, "occupation": "", "appearance": "",
+    "speech_style": "", "behavior_pattern": "", "lack_or_secret": "",
+    "desire_goal": "", "arc": "",
+    "narrative_role": "",
+    "moe_attributes": []
+  }},
+  "love_interests": [
+    {{
+      "name": "", "age": 0, "occupation": "", "appearance": "",
+      "speech_style": "", "behavior_pattern": "", "lack_or_secret": "",
+      "desire_goal": "", "arc": "",
+      "narrative_role": "",
+      "moe_attributes": []
+    }}
+  ],
+  "villain": {{
+    "name": "", "age": 0, "occupation": "", "appearance": "",
+    "speech_style": "", "behavior_pattern": "", "lack_or_secret": "",
+    "desire_goal": "", "arc": "",
+    "narrative_role": "",
+    "moe_attributes": []
+  }},
+  "supporting": [
+    {{
+      "name": "", "age": 0, "occupation": "", "appearance": "",
+      "speech_style": "", "behavior_pattern": "", "lack_or_secret": "",
+      "desire_goal": "", "arc": "",
+      "narrative_role": "",
+      "moe_attributes": []
+    }}
+  ]
 }}""".strip()
 
 
@@ -2522,6 +2680,371 @@ def build_episode_plot_prompt(arc_block, plant_map, ep_number,
 # [15] PROMPT BUILDERS — STEP 3: WRITING
 # =================================================================
 
+# =================================================================
+# [v3.0 / Phase B] 신규 블록 빌더 5종
+# 기획↔집필 연결 강제 — 기획에서 정한 모든 재료가 집필 프롬프트에 주입됨
+# =================================================================
+
+def build_formula_strategy_block(concept):
+    """[v3.0 Phase B] 메인/보조 포뮬러 다이어그램 + 표상 모티프 주입.
+    
+    concept dict에서 formula_main / formula_sub 키를 읽어, 해당 포뮬러의
+    스토리 다이어그램과 표상 모티프 키워드를 프롬프트에 강제 주입한다.
+    
+    Args:
+        concept: 콘셉트 카드 dict. 예: {"formula_main": "운명적_인연물", ...}
+    
+    Returns:
+        프롬프트 블록 문자열. 데이터 없으면 빈 문자열.
+    """
+    if not concept or not _V3_MOTIFS_AVAILABLE:
+        return ""
+    
+    formula_main = concept.get("formula_main", "")
+    formula_sub = concept.get("formula_sub", "")
+    
+    if not formula_main and not formula_sub:
+        return ""
+    
+    lines = ["[★ 포뮬러 전략 — 기획 단계에서 결정된 메인 라인 ★]"]
+    
+    # 메인 포뮬러
+    if formula_main and formula_main in ROMANCE_FORMULAS:
+        f = ROMANCE_FORMULAS[formula_main]
+        lines.append(f"\n[메인 포뮬러] {formula_main}")
+        lines.append(f"  정의: {f.get('definition', '')}")
+        diagram = f.get("story_diagram", [])
+        if diagram:
+            lines.append("  스토리 다이어그램:")
+            for step in diagram:
+                lines.append(f"    {step}")
+        rep_motifs = f.get("representative_motifs", [])
+        if rep_motifs:
+            lines.append(f"  ★ 표상 모티프 (이 회차에 1개 이상 반드시 등장): {', '.join(rep_motifs)}")
+        keywords = f.get("title_pattern_keywords", [])
+        if keywords:
+            lines.append(f"  제목 패턴 키워드: {', '.join(keywords[:6])}")
+    
+    # 보조 포뮬러
+    if formula_sub and formula_sub in ROMANCE_FORMULAS:
+        f = ROMANCE_FORMULAS[formula_sub]
+        lines.append(f"\n[보조 포뮬러] {formula_sub}")
+        lines.append(f"  정의: {f.get('definition', '')}")
+        rep_motifs = f.get("representative_motifs", [])
+        if rep_motifs:
+            lines.append(f"  표상 모티프 (등장 회차에 활용): {', '.join(rep_motifs)}")
+    
+    lines.append("\n[활용 원칙]")
+    lines.append("  - 메인 포뮬러는 작품 전체의 척추. 이 회차에서 다이어그램의 어느 지점에 있는지 의식")
+    lines.append("  - 표상 모티프 중 최소 1개는 본 회차의 행동·대사·소품 어딘가에 자연스럽게 등장")
+    lines.append("  - 모티프를 직접 명명하지 말고 행동·풍경·관계로 보여줄 것")
+    
+    return "\n".join(lines)
+
+
+def build_motif_block(concept, ep_number=0):
+    """[v3.0 Phase B] 회차별 모티프 등장 가이드.
+    
+    concept의 relationship_motifs 필드를 읽어 23모티프 중 해당 모티프의 정의를
+    주입. 어떤 회차에 어떤 모티프가 등장하는지 가이드 제공.
+    
+    Args:
+        concept: 콘셉트 카드 dict. 예: {"relationship_motifs": {"primary": "재회물", ...}}
+        ep_number: 현재 회차 번호 (0이면 모든 모티프 표시)
+    
+    Returns:
+        프롬프트 블록 문자열.
+    """
+    if not concept or not _V3_MOTIFS_AVAILABLE:
+        return ""
+    
+    motifs_data = concept.get("relationship_motifs", {})
+    if not motifs_data:
+        return ""
+    
+    primary = motifs_data.get("primary", "")
+    secondary = motifs_data.get("secondary", []) or []
+    tertiary = motifs_data.get("tertiary", []) or []
+    
+    if not (primary or secondary or tertiary):
+        return ""
+    
+    lines = ["[★ 관계성 모티프 — 23종 중 선택된 모티프 ★]"]
+    
+    # 1순위 모티프 (메인)
+    if primary and primary in RELATIONSHIP_MOTIFS_DICT:
+        m = RELATIONSHIP_MOTIFS_DICT[primary]
+        lines.append(f"\n[1순위 모티프 — 메인 관계 동력] {primary}")
+        lines.append(f"  정의: {m.get('definition', '')}")
+        combos = m.get("common_combinations", [])
+        if combos:
+            lines.append(f"  자주 결합되는 모티프: {', '.join(combos)}")
+        lines.append(f"  ★ 본 회차 집필 시 이 모티프의 동력이 본문 어딘가에 작동해야 함")
+    
+    # 2순위 모티프 (보조)
+    if secondary:
+        valid_sec = [s for s in secondary if s in RELATIONSHIP_MOTIFS_DICT]
+        if valid_sec:
+            lines.append(f"\n[2순위 모티프 — 보조 라인]")
+            for s in valid_sec[:4]:  # 최대 4개
+                m = RELATIONSHIP_MOTIFS_DICT[s]
+                lines.append(f"  · {s}: {m.get('definition', '')[:60]}...")
+    
+    # 3순위 모티프 (배경)
+    if tertiary:
+        valid_ter = [t for t in tertiary if t in RELATIONSHIP_MOTIFS_DICT]
+        if valid_ter:
+            lines.append(f"\n[3순위 모티프 — 배경 음영]")
+            lines.append(f"  {', '.join(valid_ter[:4])}")
+    
+    lines.append("\n[활용 원칙]")
+    lines.append("  - 1순위 모티프의 동력이 본 회차 행동의 1차 추동력")
+    lines.append("  - 2순위 모티프는 회차마다 분배 — 모든 회차에 다 쓸 필요 없음")
+    lines.append("  - 모티프를 정의대로 설명하지 말고 사건과 인물 관계로 구현")
+    
+    return "\n".join(lines)
+
+
+def build_character_role_block(characters_full_data, ep_number=0):
+    """[v3.0 Phase B] 9종 인물 역할 + 모에 속성 주입.
+    
+    캐릭터 풀 데이터에서 narrative_role / moe_attributes 필드를 읽어
+    각 캐릭터의 역할 행동 패턴·대사 패턴을 프롬프트에 주입.
+    
+    Args:
+        characters_full_data: 캐릭터 풀 데이터.
+            dict 형태: {char_name: {"narrative_role": ..., "moe_attributes": [...]}}
+            list 형태: [{"name": ..., "narrative_role": ..., "moe_attributes": [...]}, ...]
+        ep_number: 현재 회차 번호 (필터링용 — 현재는 모든 캐릭터 출력)
+    
+    Returns:
+        프롬프트 블록 문자열.
+    """
+    if not characters_full_data or not _V3_CHARACTER_AVAILABLE:
+        return ""
+    
+    # list → 통일된 dict 형태로 변환 (main.py는 list, 단독 호출은 dict 가능)
+    if isinstance(characters_full_data, list):
+        char_dict = {}
+        for char in characters_full_data:
+            if isinstance(char, dict) and char.get("name"):
+                char_dict[char["name"]] = char
+    elif isinstance(characters_full_data, dict):
+        char_dict = characters_full_data
+    else:
+        return ""
+    
+    if not char_dict:
+        return ""
+    
+    lines = ["[★ 9종 인물 역할 + 모에 속성 — 캐릭터 평면화 방지 ★]"]
+    has_content = False
+    
+    for char_name, char_data in char_dict.items():
+        if not isinstance(char_data, dict):
+            continue
+        
+        role = char_data.get("narrative_role", "")
+        moe_attrs = char_data.get("moe_attributes", []) or []
+        
+        if not role and not moe_attrs:
+            continue
+        
+        has_content = True
+        lines.append(f"\n[{char_name}]")
+        
+        # 9종 인물 역할
+        if role and role in CHARACTER_ROLE_TAXONOMY:
+            r = CHARACTER_ROLE_TAXONOMY[role]
+            lines.append(f"  역할: {role} (소속: {r.get('world', '')})")
+            lines.append(f"  행동 패턴: {r.get('behavior_pattern', '')}")
+            lines.append(f"  대사 패턴: {r.get('dialogue_pattern', '')}")
+        
+        # 모에 속성
+        if moe_attrs:
+            attr_descriptions = []
+            for attr in moe_attrs:
+                # "성격:쿨데레" 형식 파싱
+                if ":" in attr:
+                    cat, name = attr.split(":", 1)
+                    cat = cat.strip()
+                    name = name.strip()
+                    desc = MOE_ATTRIBUTES_25.get(cat, {}).get(name, "")
+                    if desc:
+                        attr_descriptions.append(f"{cat}:{name} ({desc})")
+                    else:
+                        attr_descriptions.append(attr)
+                else:
+                    attr_descriptions.append(attr)
+            if attr_descriptions:
+                lines.append(f"  모에 속성: {' / '.join(attr_descriptions)}")
+    
+    if not has_content:
+        return ""
+    
+    lines.append("\n[활용 원칙]")
+    lines.append("  - 한 회차에 동시 등장하는 인물은 반드시 다른 역할로 차별화")
+    lines.append("  - 행동 패턴·대사 패턴이 본문 행동/대사에 묻어나야 함")
+    lines.append("  - 모에 속성은 첫 등장 시 자연스러운 1~2개 디테일로 표현 (직접 명명 금지)")
+    
+    return "\n".join(lines)
+
+
+def build_mind_flow_arc_block(concept, ep_number=0, total_eps=42):
+    """[v3.0 Phase B] 회차별 마음 흐름 단계 자동 추론·주입.
+    
+    여주 마음 흐름 5단계 중 현재 회차가 어느 단계인지 자동 추론하고,
+    해당 단계의 내면 키워드·행동 키워드를 프롬프트에 주입.
+    이전·다음 단계도 함께 안내해 단계 전환의 자연스러움 확보.
+    
+    Args:
+        concept: 콘셉트 카드 dict (heroine_name, mind_flow_target 등)
+        ep_number: 현재 회차 번호
+        total_eps: 작품 전체 회차 수
+    
+    Returns:
+        프롬프트 블록 문자열.
+    """
+    if not _V3_CHARACTER_AVAILABLE or not ep_number:
+        return ""
+    
+    heroine_name = ""
+    if concept and isinstance(concept, dict):
+        heroine_name = concept.get("heroine_name", "") or concept.get("protagonist_name", "")
+    
+    # 현재 단계 추론
+    try:
+        current_stage = get_mind_flow_stage_for_episode(ep_number, total_eps)
+    except Exception:
+        return ""
+    
+    if not current_stage:
+        return ""
+    
+    stages = HEROINE_MIND_FLOW_PATTERNS.get("stages", [])
+    if not stages:
+        return ""
+    
+    current_idx = current_stage.get("stage", 1) - 1
+    
+    lines = [f"[★ 마음 흐름 가이드 — EP{ep_number} (총 {total_eps}회) ★]"]
+    
+    if heroine_name:
+        lines.append(f"여주: {heroine_name}")
+    
+    # 현재 단계
+    lines.append(f"\n[현재 단계] {current_stage.get('stage', '')}단계 — {current_stage.get('name', '')}")
+    lines.append(f"  설명: {current_stage.get('description', '')}")
+    
+    inner = current_stage.get("inner_state_keywords", [])
+    if inner:
+        lines.append(f"  내면 키워드: {', '.join(inner)}")
+    
+    behavior = current_stage.get("behavior_keywords", [])
+    if behavior:
+        lines.append(f"  행동 키워드: {', '.join(behavior)}")
+    
+    summary = current_stage.get("internal_state_summary", "")
+    if summary:
+        lines.append(f"  요약: {summary}")
+    
+    key_principle = current_stage.get("key_principle", "")
+    if key_principle:
+        lines.append(f"  ★ 핵심 원칙: {key_principle}")
+    
+    # 이전 단계 (전환의 자연스러움 확보)
+    if current_idx > 0:
+        prev_stage = stages[current_idx - 1]
+        lines.append(f"\n[이전 단계] {prev_stage.get('stage', '')}단계 — {prev_stage.get('name', '')}")
+        lines.append(f"  → 본 회차에서 이전 단계의 잔향이 자연스럽게 남아있어야 함")
+    
+    # 다음 단계 (전환점 회차일 때 특히 중요)
+    if current_idx < len(stages) - 1:
+        next_stage = stages[current_idx + 1]
+        # 다음 회차에서 다음 단계로 진입한다면 전환점 회차
+        if ep_number < total_eps:
+            next_ep_stage = get_mind_flow_stage_for_episode(ep_number + 1, total_eps)
+            if next_ep_stage and next_ep_stage.get("stage") != current_stage.get("stage"):
+                lines.append(f"\n[★ 전환점 회차 ★]")
+                lines.append(f"  다음 회차에서 {next_stage.get('stage', '')}단계({next_stage.get('name', '')})로 전환됨")
+                lines.append(f"  → 본 회차 마지막 부분에 전환의 씨앗이 자연스럽게 심겨야 함")
+                lines.append(f"  → 단, 단계 전환을 노골적으로 선언하지 말 것")
+    
+    lines.append("\n[활용 원칙]")
+    lines.append("  - 여주의 모든 행동·내면 묘사는 현재 단계의 키워드와 일치해야 함")
+    lines.append("  - 단계를 학술 용어로 호명하지 말 것 (마음 상태로 자연스럽게 표현)")
+    lines.append("  - 단계가 바뀌어도 인물의 어조·말투는 일관 유지")
+    
+    return "\n".join(lines)
+
+
+def build_market_viability_block(concept, ep_number=0):
+    """[v3.0 Phase B] 시장 트리거 5종 강제 충족 가이드.
+    
+    KOCCA 2024 데이터의 5대 결정 요인(인기/소재/장르/평점/가격)을
+    이 회차에서 어떻게 충족할지 가이드 제공.
+    
+    Args:
+        concept: 콘셉트 카드 dict
+        ep_number: 현재 회차 번호
+    
+    Returns:
+        프롬프트 블록 문자열.
+    """
+    if not concept or not _V3_MARKET_AVAILABLE:
+        return ""
+    
+    formula_main = concept.get("formula_main", "")
+    movement_code = concept.get("movement_code", "")
+    target_tiers = concept.get("target_consumption_tier", []) or []
+    
+    if not (formula_main or movement_code or target_tiers):
+        return ""
+    
+    lines = ["[★ 시장 트리거 5종 강제 충족 — 결제 전환 보장 ★]"]
+    lines.append("\n[2024 시장 데이터 결정 요인 5종]")
+    lines.append("  1. 인기순 부합 (45.4%) — 검증된 모티프 차용 표지")
+    lines.append("  2. 소재·줄거리 (42.7%) — 호기심 트리거 강도")
+    lines.append("  3. 장르 적합 (35.3%) — 장르 코드 명확성")
+    lines.append("  4. 평점 예측 (26.1%) — 캐릭터 매력 + 클리프행어")
+    lines.append("  5. 가격 가치 (25.4%) — 회차 분량과 정보 밀도")
+    
+    lines.append("\n[본 회차 충족 가이드]")
+    
+    # 1. 인기순 부합 — 메인 포뮬러
+    if formula_main:
+        lines.append(f"  ① 인기순: 메인 포뮬러 '{formula_main}'의 검증된 결합 패턴 표지가 회차에 등장")
+    
+    # 2. 소재 강도 — 이동 코드 활용
+    if movement_code:
+        lines.append(f"  ② 소재: 이동 코드 '{movement_code}'에서 오는 '왜 이 사람이?'의 미스터리 강화")
+    
+    # 3. 장르 적합 — 장르 약속 준수
+    genre = concept.get("genre", "")
+    if genre:
+        lines.append(f"  ③ 장르: '{genre}'의 장르 약속 준수 (장르 코드 흔들림 금지)")
+    
+    # 4. 평점 예측 — 타겟 소비자
+    if target_tiers:
+        tier_str = ", ".join(target_tiers[:2])
+        lines.append(f"  ④ 평점: 타겟 소비자({tier_str})의 몰입 트리거 강화 — 캐릭터 매력 + 강한 클리프행어")
+    
+    # 5. 가격 가치 — 정보 밀도
+    lines.append("  ⑤ 가격: 회차당 정보 밀도 유지 — 다음 회차 결제 욕구 자극할 정보·감정 임팩트")
+    
+    lines.append("\n[강제 원칙]")
+    lines.append("  - 5개 요인 중 최소 4개를 본 회차에서 충족시킬 것")
+    lines.append("  - 트리거를 직접 노출하지 말고 행동·사건·관계로 구현")
+    lines.append("  - 마지막 3~5줄은 결제 전환의 핵심 — 가장 큰 정보·감정 임팩트")
+    
+    return "\n".join(lines)
+
+
+# =================================================================
+# [v3.0 Phase B] 신규 블록 빌더 5종 — END
+# =================================================================
+
+
 def build_episode_write_prompt(episode_plot, characters, style_dna,
                                genre, rating, prev_3_episodes,
                                plant_map_relevant, formula_tags=None,
@@ -2536,8 +3059,18 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
                                profession_blocks="",
                                characters_full_data=None,
                                char_first_eps=None,
-                               scene_types=None):
-    """회차 원고 집필. v2.6.4: 컨텍스트 인식 묘사 (첫 등장 풀/재등장 압축/씬 타입 차등)."""
+                               scene_types=None,
+                               # v3.0 Phase B — 신규 블록 빌더 활성화 플래그
+                               # 인자가 비어있어도 v2.6.4 동작 유지 (호환성)
+                               use_v3_blocks=True):
+    """회차 원고 집필.
+    
+    v2.6.4: 컨텍스트 인식 묘사 (첫 등장 풀/재등장 압축/씬 타입 차등)
+    v3.0:   Phase A 데이터 기반 5종 블록 추가 주입
+            (formula_strategy / motif / character_role / mind_flow_arc / market_viability)
+            concept_dict와 characters_full_data가 v3.0 신규 필드를 갖고 있으면 자동 주입.
+            v2.6.4 호환 — 신규 필드가 비어있으면 v2.6.4와 동일 동작.
+    """
     tags_block = get_formula_block(formula_tags or [])
     motif_block = get_motif_block(primary_motif, secondary_motif)
     persona_block = get_reader_persona_block(target_persona)
@@ -2563,6 +3096,30 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
         contextual_desc_block = build_character_full_block(characters_full_data)
     else:
         contextual_desc_block = ""
+    
+    # v3.0 Phase B 신규 — 기획↔집필 연결 강제 5종 블록
+    # concept_dict / characters_full_data에 v3.0 신규 필드가 있을 때만 활성화.
+    # 비어있으면 빈 문자열 반환 → v2.6.4와 동일 동작 (호환성 유지)
+    if use_v3_blocks and concept_dict:
+        v3_formula_block = build_formula_strategy_block(concept_dict)
+        v3_motif_block_v3 = build_motif_block(concept_dict, ep_number=ep_number)
+        v3_market_block = build_market_viability_block(concept_dict, ep_number=ep_number)
+        v3_mind_flow_block = build_mind_flow_arc_block(
+            concept_dict, ep_number=ep_number, total_eps=total_eps
+        )
+    else:
+        v3_formula_block = ""
+        v3_motif_block_v3 = ""
+        v3_market_block = ""
+        v3_mind_flow_block = ""
+    
+    if use_v3_blocks and characters_full_data:
+        v3_char_role_block = build_character_role_block(
+            characters_full_data, ep_number=ep_number
+        )
+    else:
+        v3_char_role_block = ""
+    
     lp = get_platform_length(platform)
     min_len = lp["min"]
     max_len = lp["max"]
@@ -2592,6 +3149,16 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
 {prof_section}
 
 {contextual_desc_block}
+
+{v3_char_role_block}
+
+{v3_formula_block}
+
+{v3_motif_block_v3}
+
+{v3_mind_flow_block}
+
+{v3_market_block}
 
 {MISE_EN_SCENE_CHECKLIST}
 
