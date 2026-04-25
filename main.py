@@ -1,7 +1,9 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v2.6 — main.py
+👖 BLUE JEANS WEB NOVEL ENGINE v3.0 — main.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
+v3.0: Phase A 데이터 모듈 통합 (motifs/character/market/strategy)
+      Phase B 신규 5종 블록 빌더 활성화 (use_v3_blocks=True)
 © 2026 BLUE JEANS PICTURES
 """
 
@@ -1680,6 +1682,10 @@ with main_tabs[2]:
                                 characters_full_data=chars_full_data_ep,
                                 char_first_eps=char_first_eps_map,
                                 scene_types=scene_types_list,
+                                # v3.0: Phase B 신규 5종 블록 활성화
+                                # (concept_dict / characters_full_data에 v3.0 신규 필드가
+                                #  있으면 자동으로 추가 주입됨. 비어있으면 v2.6.4 동작)
+                                use_v3_blocks=True,
                             ),
                             MAX_TOKENS_EPISODE,
                             system=build_system_prompt(
