@@ -46,10 +46,25 @@ def build_system_prompt(narrative_tone="", for_episode_write=False):
     for_episode_write=True일 때만 풀 픽션 프레임 적용 (구조 단계에서는 불필요).
     """
     base = SYSTEM_PROMPT
+    # v2.6.2: 집필 시 분량 강제 규칙 시스템 프롬프트에 주입
+    LENGTH_ENFORCEMENT = """
+[★ 분량 강제 규칙 ★]
+당신은 한국 웹소설 전문 작가입니다.
+한국 웹소설 1회차 표준 분량은 5,000~6,000자입니다.
+이는 절대 규칙이며, 짧게 끝내는 것은 작가로서 가장 큰 결격사유입니다.
+- 한 씬 최소 1,000~1,500자
+- 회차 전체 최소 4,800자
+- 분량이 부족하면 인물 내면·감각 묘사·대사 후 반응을 더 풀어쓸 것
+- "이 정도면 됐다"는 판단을 절대 하지 말 것
+- 플롯의 모든 사건을 충실히 묘사할 것
+""".strip()
+
     if for_episode_write and narrative_tone:
         tone_block = get_narrative_tone_block(narrative_tone)
         if tone_block:
             return f"""{base}
+
+{LENGTH_ENFORCEMENT}
 
 {FICTION_FRAME_DECLARATION}
 
@@ -59,6 +74,8 @@ def build_system_prompt(narrative_tone="", for_episode_write=False):
 
 {ABSOLUTE_LIMITS}
 """
+    if for_episode_write:
+        return f"{base}\n\n{LENGTH_ENFORCEMENT}"
     return base
 
 # =================================================================
@@ -1770,12 +1787,14 @@ def build_character_bible_prompt(concept_card_json, profession_blocks=""):
 {prof_section}
 
 [캐릭터 바이블 필드 (캐릭터당)]
-- 이름, 나이, 직업/지위, 외모 핵심
+- 이름, 나이(숫자만), 직업/지위, 외모 핵심
 - 말투 (예문 2~3개 — 직업 전문 용어 자연스럽게 녹임)
 - 행동 패턴 (특유의 버릇/제스처 — 직업적 습관 반영)
 - 결핍/비밀 (직업적 스트레스가 개인의 상처와 맞물림)
 - 욕망/목표 (직업 세계에서의 야망 포함)
 - 변화 아크 (시즌 내 변화 방향)
+
+★ 중요: age 필드는 숫자만 (예: 32). "32세"처럼 단위를 붙이지 말 것.
 
 [직업 디테일 활용 규칙]
 - 위에 제공된 직업 블록의 세부 디테일을 캐릭터에 녹일 것
@@ -1893,7 +1912,15 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
     lp = get_platform_length(platform)
     min_len = lp["min"]
     max_len = lp["max"]
+    target_len = lp["target"]
     tol = lp["tolerance"]
+    # v2.6.2: 구조 분배 자동 계산
+    intro_min = int(target_len * 0.13)   # 도입 13%
+    intro_max = int(target_len * 0.17)   # 도입 17%
+    dev_min = int(target_len * 0.65)     # 전개 65%
+    dev_max = int(target_len * 0.75)     # 전개 75%
+    hook_min = int(target_len * 0.13)    # 훅 13%
+    hook_max = int(target_len * 0.17)    # 훅 17%
 
     return f"""[TASK] 웹소설 EP 원고 집필 — 플랫폼: {platform}
 
@@ -1946,8 +1973,21 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
 {episode_plot}
 
 [집필 지시]
-- 플랫폼: {platform} (표준 분량 {min_len}~{max_len}자, 허용 오차 ±{tol}자)
-- 도입(500~700자) → 전개(3,500~4,000자) → 훅(500~800자)
+★★★ 분량 절대 규칙 ★★★
+- 본문 분량: 최소 {min_len}자 이상, 목표 {target_len}자, 최대 {max_len}자 (★공백 포함, 회차 제목 제외★)
+- {min_len}자 미만은 "분량 미달"로 실패 처리됨. 절대 짧게 끝내지 말 것.
+- 한 씬당 평균 1,200~1,700자 × 3~4씬 = 4,500~6,500자
+- 짧게 요약하지 말고 장면을 충실히 전개할 것
+- 인물의 내면 독백·감각 묘사·디테일을 충분히 풀어쓸 것
+- 대사 사이사이 비언어적 신호(시선·호흡·손짓·정적)를 묘사로 채울 것
+
+[구조 분배 — {target_len}자 기준]
+- 플랫폼: {platform} (표준 {min_len}~{max_len}자)
+- 도입(15%): {intro_min}~{intro_max}자 — 직전 회차 연결 + 본 회차 진입
+- 전개(70%): {dev_min}~{dev_max}자 — 3~4씬 충실 전개
+- 훅(15%): {hook_min}~{hook_max}자 — 클리프행어 + 다음 회차 예고
+
+[집필 원칙]
 - 클리프행어는 플롯 지정 유형/내용 준수
 - 리캡은 자연스럽게 녹이기 (직접 요약 금지)
 - 대사 비율 40% 이상
@@ -1955,6 +1995,13 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
 - ★ 대사-지문 반드시 분리 (영어권식 "said" 뒤붙이기 금지)
 - AI Anti-Pattern A1~A14 준수
 - 마지막 3~5줄이 가장 중요
+
+[분량 미달 방지 체크리스트]
+□ 각 씬의 시작 묘사 충분한가 (배경·인물 진입)
+□ 대사 직후 반응(표정·생각·행동) 묘사 있는가
+□ 감각적 디테일(시각·청각·후각·촉각) 풀어 썼는가
+□ 회상·복선 자연스럽게 녹였는가
+□ 마지막 훅 전에 충분한 빌드업 있는가
 
 [출력 형식 — 반드시 지킬 것]
 첫 줄: 회차 제목만 (예: "EP17. 가면 뒤의 남자")
