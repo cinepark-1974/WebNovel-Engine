@@ -28,6 +28,8 @@ from prompt import (
     build_reader_simulation_prompt,
     # v2.6.4 — 컨텍스트 인식 묘사 시스템
     get_character_first_episodes, detect_scene_types,
+    # v3.0 — IdeaSeed JSON → 콘셉트 카드 변환
+    build_ideaseed_to_concept_prompt,
 )
 from profession_pack import (
     PROFESSION_PACK, PROFESSION_KEYWORDS,
@@ -604,7 +606,7 @@ main_tabs = st.tabs([
 with main_tabs[0]:
     section_header("컨셉 설계", "CONCEPT")
 
-    sub_tabs_1 = st.tabs(["📄 기획서 업로드", "💡 아이디어 생성", "✏️ 직접 입력"])
+    sub_tabs_1 = st.tabs(["📄 기획서 업로드", "💡 아이디어 생성", "✏️ 직접 입력", "🌱 IdeaSeed JSON"])
 
     # ── 1-A: 기획서 업로드 ──
     with sub_tabs_1[0]:
@@ -720,7 +722,7 @@ with main_tabs[0]:
         )
 
         # ── 서사 모티프 이중 구조 ──
-        st.markdown("**서사 모티프 (고경은 2022 연구 기반)**")
+        st.markdown("**서사 모티프**")
         col_m1, col_m2 = st.columns(2)
         with col_m1:
             primary_opts = [""] + list(NARRATIVE_MOTIFS["primary"].keys())
@@ -745,8 +747,8 @@ with main_tabs[0]:
                 key="direct_secondary_motif",
             )
 
-        # ── 타겟 독자 페르소나 (강종현 2024 + KOCCA 통계) ──
-        st.markdown("**타겟 독자 페르소나 (강종현 2024 수용자 연구)**")
+        # ── 타겟 독자 페르소나 ──
+        st.markdown("**타겟 독자 페르소나**")
         persona_opts = [""] + list(READER_PERSONAS.keys())
         cur_persona = card.get("target_persona", "")
         pers_idx = persona_opts.index(cur_persona) if cur_persona in persona_opts else 0
@@ -794,7 +796,7 @@ with main_tabs[0]:
             key="direct_is_antihero",
         )
 
-        # ── 동일시 전략 (강종현 2024 기반) ──
+        # ── 동일시 전략 ──
         with st.expander("🎭 주인공 동일시 전략 (독자 몰입 장치)"):
             id_strategy = card.get("protagonist", {}).get("identification_strategy", {})
             naming_opts = ["실명 사용", "일반명사 통일", "애칭 중심"]
@@ -849,6 +851,146 @@ with main_tabs[0]:
                 "synopsis": synopsis,
             }
             st.success("✅ 컨셉 카드 저장 완료")
+
+    # ── 1-D: IdeaSeed JSON 업로드 (v3.0 신규) ──
+    with sub_tabs_1[3]:
+        st.markdown(
+            "**Idea Engine 산출물(IdeaSeed JSON)을 업로드하면, "
+            "확정된 로그라인·장르·테마·참조작은 그대로 보존하고 "
+            "v3.0 신규 분류(포뮬러·모티프·이동코드 등)만 자동 추론합니다.**"
+        )
+        st.caption("OTT 시리즈·드라마 등 다른 매체용 IP를 웹소설로 확장할 때 사용하세요.")
+
+        ideaseed_file = st.file_uploader(
+            "IdeaSeed JSON 업로드",
+            type=["json"],
+            key="ideaseed_uploader",
+            help="Idea Engine v1.0이 생성한 JSON 파일",
+        )
+
+        # IdeaSeed 파싱 + 미결정 사항 노출
+        if ideaseed_file:
+            try:
+                ideaseed_data = json.loads(ideaseed_file.read().decode("utf-8"))
+                st.session_state.ideaseed_data = ideaseed_data
+                
+                # 메타 정보 요약 카드
+                meta = ideaseed_data.get("_idea_engine_meta", {})
+                title = ideaseed_data.get("title", "(제목 미정)")
+                
+                st.success(f"✅ IdeaSeed 로드 완료 — '{title}'")
+                
+                col_m1, col_m2, col_m3 = st.columns(3)
+                with col_m1:
+                    st.metric("판정", meta.get("verdict", "-"))
+                with col_m2:
+                    st.metric("Hook 점수", meta.get("hook_score", "-"))
+                with col_m3:
+                    st.metric("Engine 버전", meta.get("version", "-"))
+                
+                # locked 필드 미리보기
+                locked = ideaseed_data.get("locked_seed", {})
+                with st.expander("🔒 확정 사항 (locked_seed) — 그대로 보존됨", expanded=False):
+                    if locked.get("locked_logline"):
+                        st.markdown(f"**로그라인:** {locked['locked_logline']}")
+                    if locked.get("locked_genre"):
+                        g = locked["locked_genre"]
+                        genre_str = f"{g.get('primary', '')} / {g.get('secondary', '')} / {g.get('tertiary', '')}"
+                        st.markdown(f"**장르 (3중):** {genre_str}")
+                    if locked.get("locked_theme"):
+                        t = locked["locked_theme"]
+                        st.markdown(f"**표면 주제:** {t.get('surface', '')}")
+                        st.markdown(f"**심층 주제:** {t.get('deep', '')}")
+                    if locked.get("locked_format"):
+                        fmt = locked["locked_format"]
+                        st.markdown(f"**1차 매체:** {fmt.get('primary', '')}")
+                        if fmt.get("ip_strategy"):
+                            st.markdown(f"**IP 전략:** {fmt['ip_strategy']}")
+                    if locked.get("locked_references"):
+                        st.markdown("**참조작:**")
+                        for ref in locked["locked_references"]:
+                            st.markdown(f"- {ref}")
+                
+                # ── 미결정 사항 (pending_decisions) 처리 ──
+                pending = ideaseed_data.get("pending_decisions", [])
+                resolved_decisions = []
+                
+                if pending:
+                    st.divider()
+                    st.markdown("### 🤔 미결정 사항 — 콘셉트 확정 전 결정")
+                    st.caption(
+                        "Idea Engine이 작가의 결정을 요청한 항목입니다. "
+                        "각 항목마다 자동 제안을 받거나, 직접 답변을 입력하세요."
+                    )
+                    
+                    for i, decision in enumerate(pending):
+                        # decision은 문자열 또는 dict일 수 있음
+                        if isinstance(decision, str):
+                            question = decision
+                        elif isinstance(decision, dict):
+                            question = decision.get("question", str(decision))
+                        else:
+                            question = str(decision)
+                        
+                        st.markdown(f"**Q{i+1}.** {question}")
+                        
+                        decision_mode = st.radio(
+                            f"답변 방식 (Q{i+1})",
+                            ["자동 제안 (AI가 IdeaSeed 맥락 보고 결정)", "직접 입력"],
+                            horizontal=True,
+                            key=f"ideaseed_decision_mode_{i}",
+                        )
+                        
+                        if decision_mode == "직접 입력":
+                            answer = st.text_area(
+                                f"답변 (Q{i+1})",
+                                height=80,
+                                key=f"ideaseed_decision_answer_{i}",
+                                placeholder="작가의 결정을 자유롭게 입력하세요",
+                            )
+                        else:
+                            answer = "[AI 자동 결정 — IdeaSeed의 맥락·참조작·타겟·리스크를 종합해 가장 적합한 선택]"
+                        
+                        resolved_decisions.append({"question": question, "answer": answer})
+                        st.markdown("")
+                
+                # ── 변환 실행 버튼 ──
+                st.divider()
+                if st.button("🌱 IdeaSeed → v3.0 콘셉트 카드 변환", type="primary", key="convert_ideaseed_btn"):
+                    # 직접 입력 모드인데 답변 없으면 경고
+                    missing_answers = [
+                        i+1 for i, d in enumerate(resolved_decisions)
+                        if "[AI 자동 결정" not in d["answer"] and not d["answer"].strip()
+                    ]
+                    if missing_answers:
+                        st.warning(f"직접 입력으로 설정된 Q{missing_answers}의 답변이 비어있습니다. 자동 제안 또는 답변 입력 후 다시 시도하세요.")
+                    else:
+                        with st.spinner("v3.0 콘셉트 카드 변환 중..."):
+                            ideaseed_str = json.dumps(ideaseed_data, ensure_ascii=False, indent=2)
+                            raw = call_claude(
+                                build_ideaseed_to_concept_prompt(
+                                    ideaseed_str,
+                                    pending_decisions_resolved=resolved_decisions if resolved_decisions else None,
+                                ),
+                                MAX_TOKENS_STRUCTURE,
+                            )
+                        card = safe_json(raw)
+                        if card:
+                            st.session_state.concept_card = card
+                            st.success(
+                                f"✅ 콘셉트 카드 변환 완료 — '{card.get('title', '')}'\n\n"
+                                f"확정 사항(logline, genre, theme, references)은 그대로 보존되었고, "
+                                f"v3.0 신규 분류(포뮬러·모티프·이동코드·소비자 분화)가 자동 추론되었습니다."
+                            )
+                        else:
+                            st.error("콘셉트 카드 변환 실패. 아래 원본 응답을 확인해 주세요.")
+                            with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                                st.code(raw[:3000] if raw else "응답 없음", language="json")
+            
+            except json.JSONDecodeError as e:
+                st.error(f"JSON 파싱 실패: {e}")
+            except Exception as e:
+                st.error(f"파일 처리 중 오류: {e}")
 
     # ── 컨셉 카드 표시 + 보강 ──
     if st.session_state.concept_card:
@@ -1909,11 +2051,11 @@ with main_tabs[2]:
                                 for i, imp in enumerate(improvements, 1):
                                     st.markdown(f"{i}. {imp}")
 
-        # ── 3-4 독자 시뮬레이터 (신규 — 강종현 2024 몰입 이론) ──
+        # ── 3-4 독자 시뮬레이터 ──
         with sub_tabs_3[3]:
             sub_header("독자 시뮬레이터 — 몰입 경험 피드백")
             st.caption(
-                "강종현(2024) 몰입(Flow) 이론 기반. "
+                "독자 몰입(Flow) 이론 기반. "
                 "회차 원고를 실제 독자 페르소나 관점에서 읽고 몰입 진입/이탈/결제 의사를 시뮬레이션."
             )
 
