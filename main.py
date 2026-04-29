@@ -22,6 +22,7 @@ from prompt import (
     build_parse_brief_prompt, build_generate_concept_prompt, build_augment_concept_prompt,
     build_core_arc_prompt, build_extension_arc_prompt,
     build_plant_payoff_prompt, build_character_bible_prompt,
+    build_main_character_bible_prompt, build_supporting_character_bible_prompt,
     build_episode_plot_prompt, build_episode_write_prompt,
     build_rating_convert_prompt, build_alternative_scene_prompt,
     build_quality_check_prompt, build_episode_summary_prompt,
@@ -1765,47 +1766,182 @@ with main_tabs[1]:
                     })
                 return chars
 
-            if st.button("👥 캐릭터 바이블 생성", type="primary"):
-                prof_chars = _collect_characters_for_prof(concept)
-                prof_blocks_text = build_multi_profession_block(prof_chars) if prof_chars else ""
-
-                # Profession Pack 감지 결과 표시
-                if prof_blocks_text:
-                    detected_profs = []
-                    for c in prof_chars:
-                        cats = detect_profession_category(c["profession"])
-                        if cats:
-                            detected_profs.append(f"{c['name']}({cats[0]})")
-                    if detected_profs:
-                        st.info(f"📚 Profession Pack 적용: {' · '.join(detected_profs)}")
-
-                with st.spinner("캐릭터 바이블 생성 중... (캐릭터 다수 시 30~60초)"):
-                    try:
-                        raw = call_claude(
-                            build_character_bible_prompt(
-                                json.dumps(concept, ensure_ascii=False, indent=2),
-                                profession_blocks=prof_blocks_text,
-                            ),
-                            MAX_TOKENS_CHARACTER_BIBLE,  # 10000 — 5명+ 캐릭터 풍부한 바이블
+            # ── v3.0+ 분할 생성 안내 ──
+            st.markdown("**캐릭터 바이블 생성 — 주연·조연 분할 (★ v3.0+ 안정성 강화)**")
+            st.caption(
+                "토큰 한도 영구 해결 + 더 풍부한 캐릭터를 위해 두 단계로 분리. "
+                "1) 주연(주인공+사랑상대+빌런) 먼저 생성 → 2) 검토 후 조연 생성"
+            )
+            
+            # 두 컬럼 — 주연 / 조연 버튼
+            col_bible_1, col_bible_2 = st.columns(2)
+            
+            with col_bible_1:
+                # ── 1단계: 주연 생성 ──
+                main_done = bool(
+                    st.session_state.character_bible
+                    and st.session_state.character_bible.get("protagonist")
+                    and st.session_state.character_bible.get("love_interests") is not None
+                )
+                
+                btn_label = "👑 1단계: 주연 바이블 생성" if not main_done else "👑 1단계: 주연 재생성"
+                if st.button(btn_label, type="primary" if not main_done else "secondary", key="gen_main_bible"):
+                    prof_chars = _collect_characters_for_prof(concept)
+                    prof_blocks_text = build_multi_profession_block(prof_chars) if prof_chars else ""
+                    
+                    if prof_blocks_text:
+                        detected_profs = []
+                        for c in prof_chars:
+                            cats = detect_profession_category(c["profession"])
+                            if cats:
+                                detected_profs.append(f"{c['name']}({cats[0]})")
+                        if detected_profs:
+                            st.info(f"📚 Profession Pack 적용: {' · '.join(detected_profs)}")
+                    
+                    with st.spinner("주연 바이블 생성 중... (주인공+사랑상대+빌런, 30~60초)"):
+                        try:
+                            raw = call_claude(
+                                build_main_character_bible_prompt(
+                                    json.dumps(concept, ensure_ascii=False, indent=2),
+                                    profession_blocks=prof_blocks_text,
+                                ),
+                                MAX_TOKENS_CHARACTER_BIBLE,  # 10000 — 주연 7~8명 충분
+                            )
+                        except Exception as e:
+                            st.error(f"❌ 주연 바이블 생성 실패: {type(e).__name__}")
+                            st.code(str(e), language="text")
+                            raw = ""
+                    
+                    if raw:
+                        if not raw.rstrip().endswith(("}", "```", "}\n")):
+                            st.warning("⚠️ 응답이 중간에 잘렸을 수 있습니다. 다시 시도 권장.")
+                    
+                    result = safe_json(raw) if raw else None
+                    if result and isinstance(result, dict) and result.get("protagonist"):
+                        # 기존 supporting 보존 + 주연 부분만 교체
+                        existing_supporting = (
+                            st.session_state.character_bible.get("supporting", [])
+                            if st.session_state.character_bible else []
                         )
-                    except Exception as e:
-                        st.error(f"❌ 캐릭터 바이블 생성 실패: {type(e).__name__}")
-                        st.code(str(e), language="text")
-                        raw = ""
+                        result["supporting"] = existing_supporting  # 조연이 이미 있으면 보존
+                        st.session_state.character_bible = result
+                        
+                        # 주연 인원 카운트
+                        n_main = 1  # protagonist
+                        n_main += len(result.get("love_interests", []))
+                        if result.get("villain", {}).get("name"):
+                            n_main += 1
+                        st.success(f"✅ 주연 {n_main}명 바이블 완성 — 검토 후 조연 생성하세요")
+                    else:
+                        st.error("주연 바이블 생성 실패.")
+                        with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                            st.code(raw[:3000] if raw else "응답 없음", language="json")
+            
+            with col_bible_2:
+                # ── 2단계: 조연 생성 ──
+                main_done = bool(
+                    st.session_state.character_bible
+                    and st.session_state.character_bible.get("protagonist")
+                )
+                supporting_done = bool(
+                    st.session_state.character_bible
+                    and st.session_state.character_bible.get("supporting")
+                )
                 
-                if raw:
-                    # 응답 잘림 자동 감지
-                    if not raw.rstrip().endswith(("}", "```", "}\n")):
-                        st.warning("⚠️ 응답이 중간에 잘렸을 수 있습니다. 다시 시도 권장.")
+                btn_label = "🎭 2단계: 조연 바이블 생성" if not supporting_done else "🎭 2단계: 조연 재생성"
+                btn_disabled = not main_done
                 
-                result = safe_json(raw) if raw else None
-                if result:
-                    st.session_state.character_bible = result
-                    st.success("✅ 캐릭터 바이블 완성")
-                else:
-                    st.error("생성 실패.")
-                    with st.expander("🔍 디버깅 — LLM 응답 원본"):
-                        st.code(raw[:3000] if raw else "응답 없음", language="json")
+                if btn_disabled:
+                    st.caption("⏸️ 1단계 주연 생성 후 활성화")
+                
+                if st.button(
+                    btn_label,
+                    type="primary" if main_done and not supporting_done else "secondary",
+                    disabled=btn_disabled,
+                    key="gen_supporting_bible",
+                ):
+                    main_bible = st.session_state.character_bible or {}
+                    # 주연만 추출 (조연 제외한 컨텍스트 전달)
+                    main_bible_for_context = {
+                        "protagonist": main_bible.get("protagonist", {}),
+                        "love_interests": main_bible.get("love_interests", []),
+                        "villain": main_bible.get("villain", {}),
+                    }
+                    
+                    # ★ Creator Engine v2.3.1 패턴 — 일관성 사실 자동 추출
+                    try:
+                        from prompt import extract_char_consistency_facts
+                        prior_facts = extract_char_consistency_facts(main_bible_for_context)
+                        if prior_facts:
+                            st.info(f"🔗 일관성 검증: 주연 {len(prior_facts)}명의 핵심 사실(가족·학력·나이)을 조연 생성에 주입")
+                    except (ImportError, AttributeError):
+                        prior_facts = None
+                    
+                    prof_chars = _collect_characters_for_prof(concept)
+                    prof_blocks_text = build_multi_profession_block(prof_chars) if prof_chars else ""
+                    
+                    with st.spinner("조연 바이블 생성 중... (조연 3~8명 + 일관성 검증, 30~45초)"):
+                        try:
+                            raw = call_claude(
+                                build_supporting_character_bible_prompt(
+                                    concept_card_json=json.dumps(concept, ensure_ascii=False, indent=2),
+                                    main_bible_json=json.dumps(main_bible_for_context, ensure_ascii=False, indent=2),
+                                    profession_blocks=prof_blocks_text,
+                                    prior_facts=prior_facts,  # ★ 일관성 사실 주입
+                                ),
+                                8000,  # 조연 전용 — 8000으로 충분
+                            )
+                        except Exception as e:
+                            st.error(f"❌ 조연 바이블 생성 실패: {type(e).__name__}")
+                            st.code(str(e), language="text")
+                            raw = ""
+                    
+                    if raw:
+                        if not raw.rstrip().endswith(("}", "```", "}\n")):
+                            st.warning("⚠️ 응답이 중간에 잘렸을 수 있습니다. 다시 시도 권장.")
+                    
+                    result = safe_json(raw) if raw else None
+                    if result and isinstance(result, dict) and "supporting" in result:
+                        # 주연 보존 + 조연만 교체
+                        main_bible["supporting"] = result["supporting"]
+                        st.session_state.character_bible = main_bible
+                        n_supp = len(result.get("supporting", []))
+                        st.success(f"✅ 조연 {n_supp}명 바이블 완성")
+                    else:
+                        st.error("조연 바이블 생성 실패.")
+                        with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                            st.code(raw[:3000] if raw else "응답 없음", language="json")
+            
+            # ── 기존 버튼은 호환용으로 expander에 보존 ──
+            with st.expander("🔧 기타 — 기존 통합 생성 (작은 작품 ≤3명일 때)"):
+                st.caption("주연 3명 이하의 작은 작품에는 한 번에 생성도 가능합니다.")
+                if st.button("👥 통합 캐릭터 바이블 생성 (legacy)", key="gen_unified_bible"):
+                    prof_chars = _collect_characters_for_prof(concept)
+                    prof_blocks_text = build_multi_profession_block(prof_chars) if prof_chars else ""
+                    
+                    with st.spinner("통합 바이블 생성 중..."):
+                        try:
+                            raw = call_claude(
+                                build_character_bible_prompt(
+                                    json.dumps(concept, ensure_ascii=False, indent=2),
+                                    profession_blocks=prof_blocks_text,
+                                ),
+                                MAX_TOKENS_CHARACTER_BIBLE,
+                            )
+                        except Exception as e:
+                            st.error(f"❌ 생성 실패: {type(e).__name__}")
+                            raw = ""
+                    
+                    if raw:
+                        if not raw.rstrip().endswith(("}", "```", "}\n")):
+                            st.warning("⚠️ 응답이 중간에 잘렸을 수 있습니다. 분할 생성 권장.")
+                    
+                    result = safe_json(raw) if raw else None
+                    if result:
+                        st.session_state.character_bible = result
+                        st.success("✅ 통합 바이블 완성")
+                    else:
+                        st.error("생성 실패. 분할 생성을 사용하세요.")
 
             cb = st.session_state.character_bible
             if cb:
