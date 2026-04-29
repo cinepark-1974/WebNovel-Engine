@@ -2899,7 +2899,13 @@ def build_plant_payoff_prompt(arc_text, characters, arc_type="core"):
 
 
 def build_character_bible_prompt(concept_card_json, profession_blocks=""):
-    """웹소설 경량 캐릭터 바이블 생성. v2.6: 직업 블록 주입. v3.0: 9종 인물 역할 + 모에 속성 자동 분배."""
+    """[v3.0 호환 유지용] 전체 캐릭터 바이블 (주연+조연 통합).
+    
+    ★ v3.0+ 권장: build_main_character_bible_prompt + build_supporting_character_bible_prompt
+       두 함수를 사용해 분할 생성하면 토큰 한도 영구 해결 + 더 풍부한 캐릭터.
+    
+    이 함수는 기존 호환성을 위해 유지. 작은 작품(주연 3명 이하)에는 충분.
+    """
     prof_section = f"\n\n{profession_blocks}" if profession_blocks else ""
     
     # v3.0 신규 — 9종 인물 역할, 모에 25속성 안내
@@ -2981,6 +2987,315 @@ def build_character_bible_prompt(concept_card_json, profession_blocks=""):
     "narrative_role": "",
     "moe_attributes": []
   }},
+  "supporting": [
+    {{
+      "name": "", "age": 0, "occupation": "", "appearance": "",
+      "speech_style": "", "behavior_pattern": "", "lack_or_secret": "",
+      "desire_goal": "", "arc": "",
+      "narrative_role": "",
+      "moe_attributes": []
+    }}
+  ]
+}}""".strip()
+
+
+def extract_char_consistency_facts(char_bible: dict) -> list:
+    """[v3.0+ Creator Engine 패턴 도입]
+    주연 바이블에서 일관성 핵심 사실을 추출.
+    
+    가족 관계·학력·나이·출신지·직업이 다음 캐릭터 생성 시 모순 일으키지 않도록.
+    
+    Args:
+        char_bible: 캐릭터 바이블 dict {protagonist, love_interests, villain, supporting}
+    
+    Returns:
+        [{"name", "age", "occupation", "key_facts"}, ...] — 일관성 검증용 핵심 사실
+    """
+    facts = []
+    
+    def _extract_one(char: dict, role_label: str = ""):
+        if not isinstance(char, dict) or not char.get("name"):
+            return None
+        name = char.get("name", "")
+        age = char.get("age", "")
+        occupation = char.get("occupation", "") or char.get("role", "")
+        
+        # 일관성 위험 필드들 — 가족·학력·관계 등
+        key_facts = []
+        for field in ["lack_or_secret", "behavior_pattern", "appearance", "arc"]:
+            val = char.get(field, "")
+            if val and len(val) < 200:  # 너무 길면 자름
+                key_facts.append(f"{field}: {val[:150]}")
+        
+        return {
+            "name": name,
+            "age": age,
+            "occupation": occupation,
+            "role_label": role_label,
+            "key_facts": key_facts,
+        }
+    
+    # 주인공
+    p = char_bible.get("protagonist", {})
+    f = _extract_one(p, "주인공")
+    if f:
+        facts.append(f)
+    
+    # 사랑 상대
+    for i, li in enumerate(char_bible.get("love_interests", []) or []):
+        f = _extract_one(li, f"사랑상대{i+1}")
+        if f:
+            facts.append(f)
+    
+    # 빌런
+    v = char_bible.get("villain", {})
+    f = _extract_one(v, "빌런")
+    if f:
+        facts.append(f)
+    
+    return facts
+
+
+def build_prior_chars_consistency_block(prior_facts: list) -> str:
+    """[v3.0+ Creator Engine 패턴 도입]
+    이전에 생성된 캐릭터들의 일관성 사실을 다음 캐릭터 생성 LLM에게 주입할 블록.
+    
+    Args:
+        prior_facts: extract_char_consistency_facts 결과
+    
+    Returns:
+        LLM 프롬프트 삽입용 마크다운 블록 (빈 list면 빈 문자열)
+    """
+    if not prior_facts:
+        return ""
+    
+    lines = [
+        "",
+        "[★ 이미 생성된 캐릭터 — 일관성 모순 차단용 컨텍스트]",
+        "다음 캐릭터들과 가족 관계·학력·나이·출신지가 모순되지 않도록 주의:",
+        "",
+    ]
+    
+    for f in prior_facts:
+        name = f.get("name", "")
+        age = f.get("age", "")
+        occ = f.get("occupation", "")
+        label = f.get("role_label", "")
+        
+        header = f"  ▶ {name} ({label}, 나이 {age}, {occ})"
+        lines.append(header)
+        
+        for kf in f.get("key_facts", [])[:3]:  # 최대 3개만
+            lines.append(f"     - {kf}")
+        lines.append("")
+    
+    lines.extend([
+        "[일관성 규칙]",
+        "- 가족 관계: 위 인물의 가족(부모·형제·자녀)이 본 캐릭터에게도 등장한다면 동일한 인물·관계로 표현",
+        "- 학력·출신지: 같은 학교·지역 출신이면 모순 없게 (예: 같은 대학 동기인데 다른 학번 X)",
+        "- 나이 격차: 위 인물과의 나이 차이가 컨셉 카드의 관계(선후배·동기·세대차)와 일치",
+        "- 직업 세계: 같은 업계라면 같은 회사·동일 분야 가능, 단 컨셉 카드 위배 금지",
+        "- 시점·세계관: 같은 작품 세계 안에서 시간선·공간이 일관되게",
+        "",
+    ])
+    
+    return "\n".join(lines)
+
+
+def build_main_character_bible_prompt(concept_card_json, profession_blocks=""):
+    """[v3.0+ 분할 생성] 주연 캐릭터 바이블 — 주인공 + 사랑상대 + 빌런만.
+    
+    풍부한 작품(사랑상대 5명+, 빌런 1명)도 안전하게 처리.
+    조연(supporting)은 별도 build_supporting_character_bible_prompt로 생성.
+    
+    토큰 권장: max_tokens=10,000 (주연 7~8명까지 충분).
+    """
+    prof_section = f"\n\n{profession_blocks}" if profession_blocks else ""
+    
+    v3_block = ""
+    if _V3_CHARACTER_AVAILABLE:
+        roles_list = list(CHARACTER_ROLE_TAXONOMY.keys())
+        moe_appearance = list(MOE_ATTRIBUTES_25.get("외관", {}).keys())
+        moe_role = list(MOE_ATTRIBUTES_25.get("역할", {}).keys())
+        moe_personality = list(MOE_ATTRIBUTES_25.get("성격", {}).keys())
+        v3_block = f"""
+
+[v3.0 신규 — 캐릭터 메타정보 자동 분배]
+각 캐릭터에 다음 두 필드를 추가로 채울 것:
+
+1) narrative_role (9종 인물 역할 중 1, 캐릭터별로 반드시 다르게 분배):
+   {roles_list}
+   
+   ★ 평면화 방지 규칙: 모든 등장인물은 서로 다른 역할.
+   특히 메인 남주 vs 라이벌 남주들이 동일 역할을 갖지 말 것.
+   여주(protagonist)는 이 필드를 비울 수도 있음.
+
+2) moe_attributes (캐릭터당 1~3개. "카테고리:속성명" 형식):
+   외관: {moe_appearance}
+   역할: {moe_role}
+   성격: {moe_personality}
+   
+   예시: ["성격:쿨데레", "역할:신비한_단골손님"]
+   
+   ★ 차별화 규칙: 모든 인물의 모에 속성이 겹치지 않도록 분배.
+   특히 성격 속성(쿨데레/츤데레/얀데레)은 인물마다 다르게."""
+    
+    return f"""[TASK] 웹소설 ★ 주연 ★ 캐릭터 바이블 생성 (주인공 + 사랑상대 + 빌런)
+
+[컨셉 카드]
+{concept_card_json}
+{prof_section}
+
+[★ 이번 호출 범위: 주연만]
+- protagonist (주인공) — 1명
+- love_interests (사랑 상대) — 컨셉 카드에 명시된 모든 사랑 상대
+- villain (빌런) — 컨셉 카드에 빌런이 있다면
+
+조연(supporting)은 별도 호출에서 생성하므로 ★ 이번에는 만들지 말 것 ★
+
+[★ 캐릭터 간 일관성 규칙 — 평면화·모순 차단]
+한 작품 안에서 모든 주연이 함께 살아 움직이는 세계이므로, 다음을 반드시 검증:
+
+1) **나이 격차 일관성** — 컨셉 카드의 관계(선후배·동기·세대차)와 일치
+   예: 사랑상대 A·B가 "대학 동기"로 명시 → 두 사람의 나이 차이는 1살 이내
+   예: 빌런이 주인공의 "친언니" → 나이는 주인공보다 1~5살 위
+
+2) **가족 관계 통합 검증** — 한 인물의 가족이 다른 인물의 가족과 겹치면 동일 인물로
+   예: 주인공의 어머니가 사랑상대 A의 회사 동료 → 동일한 1명의 어머니
+
+3) **학력·출신지 모순 차단**
+   - 같은 학교 동문 → 학번·전공 모순 없게
+   - 같은 지역 출신 → 사투리·지역 정서 일관
+
+4) **직업 세계 충돌 방지**
+   - 사랑상대들이 같은 업계인지 컨셉 카드 확인
+   - 같은 회사라면 직급·소속 부서 모순 없게
+
+5) **세계관·시점 통합**
+   - 회귀·빙의·환생 코드가 있는 경우 → 모든 캐릭터가 같은 시간선
+   - 빌런의 동기가 주인공의 비밀과 연결되는지 확인
+
+★ 위 5가지를 어기면 작가가 후속 회차에서 모순을 발견해 재집필 부담이 큼.
+
+[캐릭터 바이블 필드 (캐릭터당)]
+- 이름, 나이(숫자만), 직업/지위, 외모 핵심
+- 말투 (예문 2~3개 — 직업 전문 용어 자연스럽게 녹임)
+- 행동 패턴 (특유의 버릇/제스처 — 직업적 습관 반영)
+- 결핍/비밀 (직업적 스트레스가 개인의 상처와 맞물림)
+- 욕망/목표 (직업 세계에서의 야망 포함)
+- 변화 아크 (시즌 내 변화 방향)
+
+★ 중요: age 필드는 숫자만 (예: 32). "32세"처럼 단위를 붙이지 말 것.
+
+[직업 디테일 활용 규칙]
+- 위에 제공된 직업 블록의 세부 디테일을 캐릭터에 녹일 것
+- 전문 용어는 말투 예문에 1~2개 자연스럽게 포함
+- 한국 맥락(계급·호칭·조직문화) 반드시 반영{v3_block}
+
+[JSON 출력 — supporting 필드는 빈 배열로 둘 것]
+{{
+  "protagonist": {{
+    "name": "", "age": 0, "occupation": "", "appearance": "",
+    "speech_style": "", "behavior_pattern": "", "lack_or_secret": "",
+    "desire_goal": "", "arc": "",
+    "narrative_role": "",
+    "moe_attributes": []
+  }},
+  "love_interests": [
+    {{
+      "name": "", "age": 0, "occupation": "", "appearance": "",
+      "speech_style": "", "behavior_pattern": "", "lack_or_secret": "",
+      "desire_goal": "", "arc": "",
+      "narrative_role": "",
+      "moe_attributes": []
+    }}
+  ],
+  "villain": {{
+    "name": "", "age": 0, "occupation": "", "appearance": "",
+    "speech_style": "", "behavior_pattern": "", "lack_or_secret": "",
+    "desire_goal": "", "arc": "",
+    "narrative_role": "",
+    "moe_attributes": []
+  }},
+  "supporting": []
+}}""".strip()
+
+
+def build_supporting_character_bible_prompt(concept_card_json, main_bible_json, profession_blocks="", prior_facts=None):
+    """[v3.0+ 분할 생성 + 일관성 검증] 조연 캐릭터 바이블 — 주연 바이블 + 일관성 사실 컨텍스트로 받음.
+    
+    조연은 주연과 차별화 + 일관성 모순 차단 두 가지를 동시에 만족해야 함.
+    
+    Args:
+        concept_card_json: 컨셉 카드 JSON
+        main_bible_json: 이미 생성된 주연 바이블 JSON (차별화용)
+        profession_blocks: 직업 디테일 블록
+        prior_facts: extract_char_consistency_facts(main_bible) 결과 — 일관성 모순 차단용
+    
+    토큰 권장: max_tokens=8,000 (조연 6~10명까지 충분).
+    """
+    prof_section = f"\n\n{profession_blocks}" if profession_blocks else ""
+    
+    # 일관성 블록 (선택적)
+    consistency_block = build_prior_chars_consistency_block(prior_facts) if prior_facts else ""
+    
+    v3_block = ""
+    if _V3_CHARACTER_AVAILABLE:
+        roles_list = list(CHARACTER_ROLE_TAXONOMY.keys())
+        moe_appearance = list(MOE_ATTRIBUTES_25.get("외관", {}).keys())
+        moe_role = list(MOE_ATTRIBUTES_25.get("역할", {}).keys())
+        moe_personality = list(MOE_ATTRIBUTES_25.get("성격", {}).keys())
+        v3_block = f"""
+
+[v3.0 신규 — 캐릭터 메타정보]
+각 조연에 다음 두 필드 채울 것:
+
+1) narrative_role (9종 중 1):
+   {roles_list}
+   
+   ★ 위 [기존 주연 바이블]에서 사용된 역할은 가능하면 피하고,
+   조연만의 다른 역할을 부여할 것. 단 보조적 역할로 적정.
+
+2) moe_attributes (조연당 1~2개, "카테고리:속성명"):
+   외관: {moe_appearance}
+   역할: {moe_role}
+   성격: {moe_personality}
+   
+   ★ 주연 바이블에 없는 속성을 우선 사용해 차별화."""
+    
+    return f"""[TASK] 웹소설 ★ 조연 ★ 캐릭터 바이블 생성 (supporting만)
+
+[컨셉 카드]
+{concept_card_json}
+
+[★ 이미 생성된 주연 바이블 — 차별화 참고용]
+{main_bible_json}
+{consistency_block}{prof_section}
+
+[★ 이번 호출 범위: 조연(supporting)만]
+- 주인공·사랑상대·빌런은 이미 생성됨. 절대 다시 만들지 말 것
+- 컨셉 카드의 시놉시스·세계관에서 필요한 조연 인물을 추출
+- 일반적으로 3~8명 정도. 작품 규모에 맞게 결정
+
+[조연이란]
+- 주연 인물 주변에서 작품 세계를 풍부화하는 보조 캐릭터
+- 가족·친구·동료·이웃·라이벌 등 작품 세계의 살아있는 배경
+- 주연만큼 풍부할 필요는 없으나, 단순 들러리는 금지
+- 각자 명확한 기능(주인공 도움/방해/거울/대조 등)을 가질 것
+
+[조연 캐릭터 필드 (조연당)]
+- 이름, 나이(숫자만), 직업/지위
+- 외모 핵심 (간략)
+- 말투 (예문 1~2개 — 주연과 명확히 다름)
+- 행동 패턴 (1~2가지 특징)
+- 결핍/비밀 (주연 서사에 영향 주는 부분만)
+- 욕망/목표 (개인적 동기, 주연과의 관계)
+- 변화 아크 (조연도 작은 변화 곡선 가짐){v3_block}
+
+★ 중요: age 필드는 숫자만.
+
+[JSON 출력 — supporting 배열만]
+{{
   "supporting": [
     {{
       "name": "", "age": 0, "occupation": "", "appearance": "",
