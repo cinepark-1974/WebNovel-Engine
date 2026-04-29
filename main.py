@@ -1580,6 +1580,11 @@ with main_tabs[1]:
             if not st.session_state.core_arc:
                 st.info("Core Arc를 먼저 생성하세요.")
             else:
+                # ★ 사전 체크 — Core Arc 데이터 검증
+                core_arc = st.session_state.core_arc
+                if isinstance(core_arc, list) and len(core_arc) == 0:
+                    st.warning("⚠️ Core Arc가 비어있습니다. STEP 2-1에서 다시 생성해 주세요.")
+                
                 if st.button("🌱 Core Arc 떡밥 맵 생성", type="primary"):
                     arc_text = json.dumps(st.session_state.core_arc, ensure_ascii=False, indent=2)
                     chars = json.dumps({
@@ -1588,17 +1593,58 @@ with main_tabs[1]:
                         "villain": concept.get("villain", {}),
                     }, ensure_ascii=False)
 
-                    with st.spinner("떡밥 설계 중..."):
-                        raw = call_claude(
-                            build_plant_payoff_prompt(arc_text, chars, arc_type="core"),
-                            MAX_TOKENS_STRUCTURE,
+                    # ★ 입력 분량 사전 체크
+                    input_size = len(arc_text) + len(chars)
+                    if input_size > 30000:
+                        st.warning(
+                            f"⚠️ 입력 데이터가 큽니다 ({input_size:,}자). "
+                            f"Core Arc가 너무 풍부하면 떡밥 맵 응답이 잘릴 수 있습니다. "
+                            f"실패 시 STEP 2-1에서 Core Arc를 더 간결하게 다시 생성해 주세요."
                         )
-                    result = safe_json(raw)
-                    if result:
-                        st.session_state.plant_map_core = result
-                        st.success(f"✅ 떡밥 {len(result.get('plants', []))}개 설계")
-                    else:
-                        st.error("떡밥 맵 생성 실패.")
+
+                    with st.spinner("떡밥 설계 중..."):
+                        try:
+                            raw = call_claude(
+                                build_plant_payoff_prompt(arc_text, chars, arc_type="core"),
+                                max_tokens=8000,  # ★ 6000 → 8000 (떡밥 다수 + Extension예비 여유)
+                            )
+                        except Exception as e:
+                            st.error(f"❌ LLM 호출 실패: {type(e).__name__}")
+                            st.code(str(e), language="text")
+                            st.markdown(
+                                "**해결 방법:**\n"
+                                "1. API 크레딧 확인 (console.anthropic.com)\n"
+                                "2. 잠시 후 재시도\n"
+                                "3. Core Arc를 더 간결하게 재생성"
+                            )
+                            raw = ""
+                    
+                    if raw:
+                        # 응답 잘림 자동 감지
+                        is_truncated = not raw.rstrip().endswith(("}", "```", "}\n"))
+                        if is_truncated:
+                            st.warning(
+                                "⚠️ 응답이 중간에 잘린 것 같습니다 (끝에 닫는 괄호 누락). "
+                                "다시 시도하시면 보통 해결됩니다. "
+                                "또는 Core Arc를 더 간결하게 다시 만드시면 안전합니다."
+                            )
+                        
+                        result = safe_json(raw)
+                        # ★ 검증 — dict이고 plants 키가 있는지
+                        if result and isinstance(result, dict) and "plants" in result:
+                            st.session_state.plant_map_core = result
+                            st.success(f"✅ 떡밥 {len(result.get('plants', []))}개 설계")
+                        elif result and isinstance(result, dict):
+                            # dict이지만 plants 키가 없음 — 부분 복구 시도
+                            st.warning(
+                                "⚠️ 응답에 'plants' 키가 없습니다. 응답 구조가 예상과 다릅니다."
+                            )
+                            with st.expander("🔍 디버깅 — 받은 데이터 구조"):
+                                st.code(json.dumps(result, ensure_ascii=False, indent=2)[:3000], language="json")
+                        else:
+                            st.error("떡밥 맵 생성 실패. 아래 원본 응답을 확인해 주세요.")
+                            with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                                st.code(raw[:3000] if raw else "응답 없음", language="json")
 
                 pm = st.session_state.plant_map_core
                 if pm and "plants" in pm:
