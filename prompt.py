@@ -2122,11 +2122,49 @@ def _rating_block(rating):
 # =================================================================
 
 def build_parse_brief_prompt(brief_text):
-    """기획서 텍스트를 컨셉 카드 JSON으로 파싱."""
+    """기획서 텍스트를 컨셉 카드 JSON으로 파싱. v3.0: 신규 필드 자동 추론.
+    
+    분량 보호: 입력 텍스트가 너무 길면 앞부분 + 끝부분만 사용.
+    (긴 기획서일수록 핵심 정보는 앞부분에 있고, 결말은 뒷부분에 있음)
+    """
+    # 분량 제한 — 너무 긴 기획서는 토큰 한도 초과 위험
+    MAX_BRIEF_CHARS = 12000  # 약 15K~20K 토큰 (한국어 기준)
+    
+    if len(brief_text) > MAX_BRIEF_CHARS:
+        head = brief_text[: MAX_BRIEF_CHARS - 2000]
+        tail = brief_text[-2000:]
+        brief_text = (
+            head
+            + "\n\n[...중략...]\n\n"
+            + tail
+        )
+    
     primary_list = list(NARRATIVE_MOTIFS["primary"].keys())
     secondary_list = list(NARRATIVE_MOTIFS["secondary"].keys())
     persona_list = list(READER_PERSONAS.keys())
     tone_list = list(NARRATIVE_TONE_PRESETS.keys())
+    
+    # v3.0 신규 분류 — 데이터 모듈에서 가져옴
+    formulas_list = list(ROMANCE_FORMULAS.keys()) if _V3_MOTIFS_AVAILABLE else []
+    motifs_list = list(RELATIONSHIP_MOTIFS_DICT.keys()) if _V3_MOTIFS_AVAILABLE else []
+    movement_list = list(MOVEMENT_NARRATIVE_PATTERNS.keys()) if _V3_MOTIFS_AVAILABLE else []
+    consumption_tiers = list(READER_CONSUMPTION_TIERS.keys()) if _V3_CHARACTER_AVAILABLE else []
+    
+    v3_block = ""
+    if _V3_MOTIFS_AVAILABLE and _V3_CHARACTER_AVAILABLE:
+        v3_block = f"""
+- v3.0 신규 분류 (반드시 추론):
+  · formula_main (메인 포뮬러): {formulas_list}
+  · formula_sub (보조 포뮬러, 없으면 빈 문자열)
+  · movement_code (이동 코드): {movement_list} 중 1 (해당 없으면 빈 문자열)
+  · relationship_motifs.primary: 23종 중 1 (메인 관계 동력)
+  · relationship_motifs.secondary: 23종 중 2~4개 (보조 라인)
+  · relationship_motifs.tertiary: 23종 중 0~3개 (배경 음영)
+  · target_consumption_tier (소비자 분화, 1~2개): {consumption_tiers}
+  · heroine_name (여주가 있다면 이름)
+  
+  23 관계성 모티프 목록: {motifs_list}"""
+    
     return f"""다음은 웹소설/드라마 기획서 텍스트입니다. 이 내용을 웹소설 컨셉 카드 JSON으로 변환하세요.
 
 [기획서 원문]
@@ -2150,7 +2188,7 @@ def build_parse_brief_prompt(brief_text):
   · 현판·헌터물·흑화 서사는 "19금 현판 (문피아 남성향 톤)"
   · 게임 세계관은 "19금 게임판타지 (남성향)"
   · 건전한 일반 작품은 "15금 일반"
-- 주인공 성격이 실리적이거나 반동인물적이면 is_antihero=true
+- 주인공 성격이 실리적이거나 반동인물적이면 is_antihero=true{v3_block}
 
 [JSON 출력 — 이 구조를 정확히 따를 것]
 {{
@@ -2162,6 +2200,16 @@ def build_parse_brief_prompt(brief_text):
   "secondary_motif": "성장물|먼치킨물|사이다물|시한부물|책빙의물|육아물|법정물|학원물|아이돌물|전문직물|연예계물|헌터물 중 하나 (없으면 빈 문자열)",
   "target_persona": "10대 여성|20~30대 여성|20~30대 남성|40대 이상 여성|청소년 남성 중 하나",
   "narrative_tone": "15금 일반|19금 치정 로맨스 (리디 성인관 톤)|19금 판타지 (왕좌의 게임 톤)|19금 현판 (문피아 남성향 톤)|19금 게임판타지 (남성향)|조아라 노블레스 톤 중 하나",
+  "formula_main": "",
+  "formula_sub": "",
+  "movement_code": "",
+  "relationship_motifs": {{
+    "primary": "",
+    "secondary": [],
+    "tertiary": []
+  }},
+  "target_consumption_tier": [],
+  "heroine_name": "",
   "protagonist": {{
     "name": "", "age": 0, "role": "직업/지위",
     "profession": "한국 전문직 카테고리 명 (법률직·의료직·재벌2세3세·헌터각성자·판타지직업·회빙환주인공 등) + 세부 직종 명시",
@@ -2184,6 +2232,200 @@ def build_parse_brief_prompt(brief_text):
   "season_questions": {{"romance": "", "mystery": ""}},
   "synopsis": "전체 시놉시스 3~5문장"
 }}""".strip()
+
+
+# =================================================================
+# [v3.0 Phase D] 기획서 자동 변환 — 완성된 작품 기획서 → IdeaSeed 호환 콘셉트
+# =================================================================
+
+def build_brief_to_seed_prompt(brief_text, episode_structure=None):
+    """[v3.0 Phase D] 완성된 작품 기획서를 IdeaSeed 호환 콘셉트 카드로 변환.
+    
+    build_parse_brief_prompt와 다른 점:
+    - 입력 분량을 자르지 않음 (Sonnet 4.6의 1M 컨텍스트 활용)
+    - locked_seed 구조로 출력 (IdeaSeed 호환)
+    - 회차 구조 정보가 있으면 colspan 활용
+    - v3.0 신규 분류 자동 추론
+    
+    Args:
+        brief_text: 기획서 전체 텍스트 (자르지 않은 원본)
+        episode_structure: parser.detect_episode_structure() 결과 (선택)
+    
+    Returns:
+        Sonnet 4.6 호출용 프롬프트 문자열.
+    """
+    primary_list = list(NARRATIVE_MOTIFS["primary"].keys())
+    persona_list = list(READER_PERSONAS.keys())
+    
+    formulas_list = list(ROMANCE_FORMULAS.keys()) if _V3_MOTIFS_AVAILABLE else []
+    motifs_list = list(RELATIONSHIP_MOTIFS_DICT.keys()) if _V3_MOTIFS_AVAILABLE else []
+    movement_list = list(MOVEMENT_NARRATIVE_PATTERNS.keys()) if _V3_MOTIFS_AVAILABLE else []
+    consumption_tiers = list(READER_CONSUMPTION_TIERS.keys()) if _V3_CHARACTER_AVAILABLE else []
+    
+    # 회차 구조 정보 (있으면)
+    structure_section = ""
+    if episode_structure and episode_structure.get("has_episode_structure"):
+        n_eps = episode_structure.get("max_episode", 0)
+        n_acts = len(episode_structure.get("act_markers", []))
+        ep_count = len(episode_structure.get("episode_markers", []))
+        structure_section = f"""
+
+[기획서 구조 자동 분석 결과]
+- ACT 수: {n_acts}개
+- 식별된 회차 마커: {ep_count}개
+- 최대 회차 번호: EP{n_eps}
+→ 이 작품은 회차 구조가 명확하므로 episode_count, total_eps 추정 가능"""
+    
+    return f"""[TASK] 완성된 작품 기획서를 v3.0 콘셉트 카드로 변환
+
+당신은 한국 웹소설·드라마 기획·편집 베테랑입니다. 다음 작품 기획서를 분석해
+v3.0 엔진에서 사용할 콘셉트 카드 JSON으로 변환하세요.
+
+[기획서 원문]
+{brief_text}{structure_section}
+
+[변환 원칙]
+1. 기획서에 명시된 정보만 반영. 없으면 빈 문자열 또는 빈 배열.
+2. 작가의 의도를 존중 — 기획서에 표현된 톤·분위기·세계관을 그대로 보존.
+3. v3.0 신규 분류는 기획서 내용을 보고 정확히 추론.
+4. 회차별 스토리라인이 기획서에 있으면 그것이 핵심 자산이므로 무시하지 말 것.
+5. 기획서가 길어도 핵심을 놓치지 않도록 — 시놉시스, 캐릭터, 회차 구조 모두 분석.
+
+[v3.0 신규 분류 — 반드시 채울 것]
+- formula_main (메인 포뮬러, 6종 중 1): {formulas_list}
+- formula_sub (보조 포뮬러, 없으면 빈 문자열)
+- movement_code (이동 코드, 5종 중 1): {movement_list}
+- relationship_motifs:
+  · primary: 23종 중 1 (메인 관계 동력)
+  · secondary: 23종 중 2~4개 (보조 라인)
+  · tertiary: 23종 중 0~3개 (배경 음영)
+- target_consumption_tier (소비자 분화, 1~2개): {consumption_tiers}
+- heroine_name (여주가 있다면 이름)
+
+23 관계성 모티프 목록: {motifs_list}
+
+[JSON 출력 — IdeaSeed 호환 + v3.0 신규 필드]
+{{
+  "title": "(기획서의 제목 그대로)",
+  "genre": "(기획서 장르)",
+  "logline": "(기획서 로그라인)",
+  "formula_tags": ["환생","치정" 등 해당 태그],
+  "primary_motif": "회귀|빙의|환생|귀환|차원이동|일상 중 1",
+  "secondary_motif": "성장물|먼치킨물|사이다물|시한부물|책빙의물|법정물|학원물|아이돌물|전문직물|연예계물|헌터물 중 1",
+  "target_persona": "{persona_list[0] if persona_list else ''}|... 중 1",
+  "narrative_tone": "15금 일반|19금 치정 로맨스|19금 판타지|19금 현판|19금 게임판타지 중 1",
+  "formula_main": "",
+  "formula_sub": "",
+  "movement_code": "",
+  "relationship_motifs": {{
+    "primary": "",
+    "secondary": [],
+    "tertiary": []
+  }},
+  "target_consumption_tier": [],
+  "heroine_name": "",
+  "protagonist": {{
+    "name": "", "age": 0, "role": "직업/지위",
+    "profession": "전문직 카테고리",
+    "goal": "", "need": "", "fatal_flaw": "", "is_antihero": false,
+    "identification_strategy": {{
+      "naming_style": "실명 사용|일반명사 통일|애칭 중심 중 1",
+      "empathy_points": ["독자 공감 포인트 1~3개"],
+      "inner_monologue_style": ""
+    }}
+  }},
+  "love_interests": [
+    {{"name": "", "role": "", "profession": "", "appeal": "", "conflict": ""}}
+  ],
+  "villain": {{
+    "name": "", "role": "", "profession": "",
+    "wants": "", "justification": "", "limits": "", "win_rate": ""
+  }},
+  "world": "",
+  "relationships": "",
+  "season_questions": {{"romance": "", "mystery": ""}},
+  "synopsis": "(기획서 시놉시스 3~5문장으로 압축)",
+  "estimated_total_episodes": 0,
+  "brief_meta": {{
+    "source": "DOCX 기획서 자동 변환",
+    "deep_theme": "(기획서가 담고 있는 심층 주제 — locked_theme.deep 호환)",
+    "references": [],
+    "risks_to_address": []
+  }}
+}}""".strip()
+
+
+def build_brief_episode_extraction_prompt(brief_text, episode_structure):
+    """[v3.0 Phase D] 기획서에서 회차별 스토리라인을 구조화된 JSON으로 추출.
+    
+    이 빌더는 build_brief_to_seed_prompt와 별도로 호출되며,
+    회차별 플롯을 STEP 2 빌드업·STEP 3 회차 플롯 단계에서 활용 가능한 형태로 만든다.
+    
+    Args:
+        brief_text: 기획서 전체 텍스트
+        episode_structure: parser.detect_episode_structure() 결과
+    
+    Returns:
+        Sonnet 4.6 호출용 프롬프트 문자열.
+    """
+    n_eps = episode_structure.get("max_episode", 0) if episode_structure else 0
+    detected_eps = episode_structure.get("episode_markers", []) if episode_structure else []
+    
+    detected_summary = ""
+    if detected_eps:
+        lines = ["[자동 감지된 회차 마커]"]
+        for em in detected_eps[:30]:
+            lines.append(f"  EP{em['ep_num']}: {em['label']}")
+        if len(detected_eps) > 30:
+            lines.append(f"  ... 외 {len(detected_eps) - 30}개")
+        detected_summary = "\n".join(lines)
+    
+    return f"""[TASK] 기획서에서 회차별 스토리라인 추출
+
+당신은 한국 웹소설 시놉시스 분석 전문가입니다. 다음 작품 기획서에서
+회차별 스토리라인을 구조화해 추출하세요.
+
+[기획서 원문]
+{brief_text}
+
+{detected_summary}
+
+[추출 원칙]
+1. 기획서에 명시된 회차만 추출 (없는 회차는 만들지 말 것).
+2. 회차별 핵심 사건·인물 등장·전환점·클리프행어를 분리.
+3. ACT 구조가 있으면 함께 표시.
+4. 회차 본문이 짧으면 비워둘 것 — 무리한 확장 금지.
+5. 기획서에서 "X화" 또는 "ACT N"으로 명시된 부분만 추출.
+
+[JSON 출력]
+{{
+  "act_structure": [
+    {{
+      "act": "ACT I",
+      "ep_range": "EP1-15",
+      "summary": "ACT I 전체 한 줄 요약"
+    }}
+  ],
+  "episodes": [
+    {{
+      "ep_num": 1,
+      "label": "설정",
+      "act": "ACT I",
+      "key_events": ["핵심 사건 1", "핵심 사건 2"],
+      "characters_present": ["등장 인물"],
+      "turning_point": "이 회차의 전환점 (있으면)",
+      "cliffhanger": "회차 끝 클리프행어 (있으면)",
+      "raw_summary": "기획서에 적힌 이 회차 스토리라인을 1~3 문장으로 압축"
+    }}
+  ],
+  "total_episodes_in_brief": 0,
+  "structure_quality": "상|중|하 (회차 구조 자세함의 정도)"
+}}""".strip()
+
+
+# =================================================================
+# [v3.0 Phase D END] 기획서 자동 변환
+# =================================================================
 
 
 def build_ideaseed_to_concept_prompt(ideaseed_json_str, pending_decisions_resolved=None):
