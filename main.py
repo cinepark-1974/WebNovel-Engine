@@ -245,8 +245,11 @@ st.markdown("""
 MODEL_OPUS = "claude-opus-4-7"
 MODEL_SONNET = "claude-sonnet-4-6"
 MAX_TOKENS_ARC = 12000
-MAX_TOKENS_EPISODE = 16000   # v2.6.2: 8000→16000, 5,000~6,500자 안정 생성을 위해 2배
-MAX_TOKENS_STRUCTURE = 6000
+MAX_TOKENS_EPISODE = 16000   # v2.6.2: 8000→16000, 5,000~6,500자 안정 생성
+# v3.0 수정: 본격 작품(시리즈 OTT, 50화 웹소설)의 풍부한 출력 대응
+MAX_TOKENS_STRUCTURE = 8000        # 6000→8000 (콘셉트 카드, 보강, 떡밥 맵)
+MAX_TOKENS_CHARACTER_BIBLE = 10000 # 신설 — 캐릭터 5명+ 자세한 출력 여유
+MAX_TOKENS_EPISODE_PLOT = 4000     # 신설 — 회차 1개 플롯 (작은 출력)
 MAX_TOKENS_ANALYSIS = 4000
 
 
@@ -1703,15 +1706,26 @@ with main_tabs[1]:
                     if detected_profs:
                         st.info(f"📚 Profession Pack 적용: {' · '.join(detected_profs)}")
 
-                with st.spinner("캐릭터 바이블 생성 중..."):
-                    raw = call_claude(
-                        build_character_bible_prompt(
-                            json.dumps(concept, ensure_ascii=False, indent=2),
-                            profession_blocks=prof_blocks_text,
-                        ),
-                        MAX_TOKENS_STRUCTURE,
-                    )
-                result = safe_json(raw)
+                with st.spinner("캐릭터 바이블 생성 중... (캐릭터 다수 시 30~60초)"):
+                    try:
+                        raw = call_claude(
+                            build_character_bible_prompt(
+                                json.dumps(concept, ensure_ascii=False, indent=2),
+                                profession_blocks=prof_blocks_text,
+                            ),
+                            MAX_TOKENS_CHARACTER_BIBLE,  # 10000 — 5명+ 캐릭터 풍부한 바이블
+                        )
+                    except Exception as e:
+                        st.error(f"❌ 캐릭터 바이블 생성 실패: {type(e).__name__}")
+                        st.code(str(e), language="text")
+                        raw = ""
+                
+                if raw:
+                    # 응답 잘림 자동 감지
+                    if not raw.rstrip().endswith(("}", "```", "}\n")):
+                        st.warning("⚠️ 응답이 중간에 잘렸을 수 있습니다. 다시 시도 권장.")
+                
+                result = safe_json(raw) if raw else None
                 if result:
                     st.session_state.character_bible = result
                     st.success("✅ 캐릭터 바이블 완성")
@@ -1899,7 +1913,7 @@ with main_tabs[1]:
                                         total_eps=total_plot_eps,
                                         intimacy_schedule=concept.get("intimacy_schedule") or st.session_state.get("intimacy_schedule"),
                                     ),
-                                    MAX_TOKENS_STRUCTURE,
+                                    MAX_TOKENS_EPISODE_PLOT,
                                 )
                             result = safe_json(raw)
                             if result:
@@ -2006,7 +2020,7 @@ with main_tabs[1]:
                                     total_eps=total_plot_eps,
                                     intimacy_schedule=concept.get("intimacy_schedule") or st.session_state.get("intimacy_schedule"),
                                 ),
-                                MAX_TOKENS_STRUCTURE,
+                                MAX_TOKENS_EPISODE_PLOT,
                             )
                         result = safe_json(raw)
                         if result:
