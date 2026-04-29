@@ -345,8 +345,9 @@ def compute_episode_validation_score(
     ep_number: int = 0,
     total_eps: int = 42,
     cliffhanger_type: Optional[str] = None,
+    plant_map: Optional[dict] = None,  # ★ v3.0+ — 떡밥 활용도 검수용
 ) -> dict:
-    """회차 단독 5축 종합 점수.
+    """회차 단독 6축 종합 점수.
     
     Returns:
         {
@@ -356,6 +357,7 @@ def compute_episode_validation_score(
                 "CLIFFHANGER_STRENGTH": {...},
                 "MISE_EN_SCENE":        {...},
                 "MARKET_VIABILITY":     {...},
+                "PLANT_USAGE":          {...},  # ★ 신규 — 떡밥 활용도
             },
             "overall": 0~100,
             "grade": "PASS|WARN|REDO",
@@ -413,13 +415,22 @@ def compute_episode_validation_score(
         "detail": market_score["detail"],
     }
     
-    # 종합 점수 (가중 평균)
+    # 6) ★ PLANT_USAGE — 떡밥 활용도 (v3.0+ 신규)
+    plant_score = _score_plant_usage(plant_map, written_text, ep_number)
+    axes["PLANT_USAGE"] = {
+        "score": plant_score["score"],
+        "critical": plant_score.get("critical", False),  # 회수 누락 시 critical
+        "detail": plant_score["detail"],
+    }
+    
+    # 종합 점수 (가중 평균) — 6축으로 재조정
     weights = {
-        "MATERIAL_USAGE":         0.30,
-        "CHARACTER_CONSISTENCY":  0.25,
-        "CLIFFHANGER_STRENGTH":   0.15,
-        "MISE_EN_SCENE":          0.10,
-        "MARKET_VIABILITY":       0.20,
+        "MATERIAL_USAGE":         0.25,  # 0.30 → 0.25
+        "CHARACTER_CONSISTENCY":  0.20,  # 0.25 → 0.20
+        "CLIFFHANGER_STRENGTH":   0.15,  # 유지
+        "MISE_EN_SCENE":          0.10,  # 유지
+        "MARKET_VIABILITY":       0.15,  # 0.20 → 0.15
+        "PLANT_USAGE":            0.15,  # 신규
     }
     overall = sum(axes[ax]["score"] * w for ax, w in weights.items())
     overall = int(round(overall))
@@ -652,6 +663,192 @@ def _score_market_viability_episode(
     return {"score": score, "detail": detail}
 
 
+def _score_plant_usage(plant_map: Optional[dict], text: str, ep_number: int) -> dict:
+    """[v3.0+] 떡밥 활용도 점수.
+    
+    이번 회차에 심기·힌트·회수해야 할 떡밥이 본문에 실제로 반영됐는지 검증.
+    
+    채점 기준:
+    - 심기 떡밥: 떡밥 명사·대표 키워드가 본문에 등장 (50% 비중)
+    - 힌트 떡밥: 떡밥 명사가 본문에 한 번이라도 등장 (30% 비중)
+    - 회수 떡밥: payoff_description 키워드가 본문에 등장 (★ critical, 누락 시 강제 REDO)
+    
+    회차에 떡밥이 없으면 N/A 처리 (점수 80, 중립).
+    
+    Args:
+        plant_map: {"plants": [...]} 형태의 떡밥 맵
+        text: 회차 본문
+        ep_number: 회차 번호
+    
+    Returns:
+        {
+            "score": 0~100,
+            "critical": bool (회수 누락 시 True),
+            "detail": {
+                "plants_to_plant": [...],   # 이번 회차 심기 대상
+                "plants_to_hint": [...],    # 이번 회차 힌트 대상
+                "plants_to_payoff": [...],  # 이번 회차 회수 대상
+                "planted_ok": [...],        # 잘 반영된 떡밥
+                "missed": [...],            # 누락된 떡밥 (★ critical)
+            }
+        }
+    """
+    if not plant_map or not isinstance(plant_map, dict):
+        return {
+            "score": 80,
+            "critical": False,
+            "detail": {"reason": "떡밥 맵 없음 — 검수 생략 (중립 80점)"}
+        }
+    
+    plants = plant_map.get("plants", [])
+    if not plants:
+        return {
+            "score": 80,
+            "critical": False,
+            "detail": {"reason": "떡밥 맵 비어있음 — 중립 80점"}
+        }
+    
+    # 이번 회차 관련 떡밥 분류
+    to_plant = [p for p in plants if p.get("plant_ep") == ep_number]
+    to_hint = [p for p in plants if ep_number in p.get("hints", [])]
+    to_payoff = [p for p in plants if p.get("payoff_ep") == ep_number]
+    
+    if not (to_plant or to_hint or to_payoff):
+        return {
+            "score": 85,
+            "critical": False,
+            "detail": {
+                "reason": "이번 회차에 관련 떡밥 없음",
+                "plants_to_plant": [],
+                "plants_to_hint": [],
+                "plants_to_payoff": [],
+                "planted_ok": [],
+                "missed": [],
+            }
+        }
+    
+    # 검수 — 본문에 흔적 검색
+    planted_ok = []
+    missed = []
+    critical_missed = []
+    
+    # ─── [심기] 떡밥 검증 ─────────────────
+    plant_score_sum = 0
+    plant_score_max = 0
+    for p in to_plant:
+        plant_score_max += 50
+        name = p.get("name", "")
+        # 떡밥 명사의 핵심 키워드 추출 (한글 2~6자 명사들)
+        keywords = _extract_plant_keywords(name, p.get("description", ""))
+        hits = sum(1 for kw in keywords if kw and kw in text)
+        if hits >= 2:
+            planted_ok.append(f"[심기] {name} (키워드 {hits}개)")
+            plant_score_sum += 50
+        elif hits == 1:
+            planted_ok.append(f"[심기] {name} (약함, 키워드 1개)")
+            plant_score_sum += 30
+        else:
+            missed.append(f"[심기] {name} 본문에 흔적 없음")
+    
+    # ─── [힌트] 떡밥 검증 ─────────────────
+    hint_score_sum = 0
+    hint_score_max = 0
+    for p in to_hint:
+        hint_score_max += 30
+        name = p.get("name", "")
+        keywords = _extract_plant_keywords(name, p.get("description", ""))
+        hits = sum(1 for kw in keywords if kw and kw in text)
+        if hits >= 1:
+            planted_ok.append(f"[힌트] {name}")
+            hint_score_sum += 30
+        else:
+            missed.append(f"[힌트] {name} 본문에 흔적 없음")
+    
+    # ─── [회수] 떡밥 검증 (★ critical) ────
+    payoff_score_sum = 0
+    payoff_score_max = 0
+    for p in to_payoff:
+        payoff_score_max += 100
+        name = p.get("name", "")
+        payoff_desc = p.get("payoff_description", "")
+        # 회수 방식 키워드도 검색
+        keywords = _extract_plant_keywords(name, p.get("description", ""))
+        payoff_keywords = _extract_plant_keywords("", payoff_desc) if payoff_desc else []
+        all_kw = keywords + payoff_keywords
+        
+        plant_hits = sum(1 for kw in keywords if kw and kw in text)
+        payoff_hits = sum(1 for kw in payoff_keywords if kw and kw in text)
+        total_hits = plant_hits + payoff_hits
+        
+        if total_hits >= 3:
+            planted_ok.append(f"[회수] {name} (강함, 키워드 {total_hits}개)")
+            payoff_score_sum += 100
+        elif total_hits >= 1:
+            planted_ok.append(f"[회수] {name} (약함, 키워드 {total_hits}개)")
+            payoff_score_sum += 60
+            missed.append(f"⚠️ [회수] {name} 약하게 회수됨 — 카타르시스 부족 가능")
+        else:
+            critical_missed.append(f"❌ [회수] {name} 회수 누락 (★ 재집필 필수)")
+            missed.append(f"❌ [회수] {name} 회수 누락")
+            payoff_score_sum += 0
+    
+    # ─── 종합 점수 ───────────────────────
+    total_max = plant_score_max + hint_score_max + payoff_score_max
+    total_sum = plant_score_sum + hint_score_sum + payoff_score_sum
+    
+    score = int((total_sum / total_max) * 100) if total_max > 0 else 80
+    
+    # 회수 누락 시 critical
+    is_critical = bool(critical_missed)
+    if is_critical:
+        score = min(score, 50)  # 회수 누락은 50점 이하로 강제
+    
+    return {
+        "score": score,
+        "critical": is_critical,
+        "detail": {
+            "plants_to_plant": [p.get("name", "") for p in to_plant],
+            "plants_to_hint": [p.get("name", "") for p in to_hint],
+            "plants_to_payoff": [p.get("name", "") for p in to_payoff],
+            "planted_ok": planted_ok,
+            "missed": missed,
+            "critical_missed": critical_missed,
+        }
+    }
+
+
+def _extract_plant_keywords(name: str, description: str) -> list:
+    """떡밥 명사·설명에서 검색용 키워드 추출.
+    
+    한글 2~6자 명사 위주. 설명에서는 명사만 골라냄.
+    """
+    keywords = set()
+    
+    # 떡밥 이름에서 추출
+    if name:
+        # 공백·콤마·점·괄호로 분리
+        import re
+        parts = re.split(r'[\s,\.\(\)\[\]]+', name)
+        for part in parts:
+            part = part.strip()
+            if 2 <= len(part) <= 8:
+                keywords.add(part)
+    
+    # 설명에서 추출 — 한글 2~5자 단어 (명사 위주)
+    if description:
+        import re
+        # 한글 2~5자 단어 추출
+        words = re.findall(r'[가-힣]{2,5}', description)
+        # 흔한 조사·연결어 제외
+        common = {"있다", "없다", "되다", "하다", "이다", "그리고", "그러나", "하지만",
+                  "한다", "한", "된", "들", "것", "수", "안", "안에", "위에"}
+        for w in words:
+            if w not in common and len(w) >= 2:
+                keywords.add(w)
+    
+    return list(keywords)[:10]  # 최대 10개
+
+
 def _generate_verdict(grade: str, axes: dict, overall: int) -> str:
     """등급별 한 줄 판정문."""
     weak_axes = [
@@ -815,7 +1012,7 @@ def generate_material_usage_report(
         "",
         f"_{verdict}_",
         "",
-        "**5축 점수**",
+        "**6축 점수** (v3.0+ PLANT_USAGE 추가)",
     ]
     
     axis_labels = {
@@ -824,6 +1021,7 @@ def generate_material_usage_report(
         "CLIFFHANGER_STRENGTH":   "클리프행어",
         "MISE_EN_SCENE":          "묘사·장면",
         "MARKET_VIABILITY":       "시장 트리거",
+        "PLANT_USAGE":            "떡밥 활용",  # ★ 신규
     }
     
     for ax_key, ax_data in axes.items():
@@ -849,6 +1047,38 @@ def generate_material_usage_report(
             lines.append("- ❌ **핵심 누락**:")
             for cm in critical_missing:
                 lines.append(f"  - {cm}")
+    
+    # ★ PLANT_USAGE 상세 (신규)
+    plant_detail = axes.get("PLANT_USAGE", {}).get("detail", {})
+    if plant_detail and not plant_detail.get("reason"):  # 떡밥 맵이 있는 경우만
+        plants_to_payoff = plant_detail.get("plants_to_payoff", [])
+        plants_to_plant = plant_detail.get("plants_to_plant", [])
+        plants_to_hint = plant_detail.get("plants_to_hint", [])
+        planted_ok = plant_detail.get("planted_ok", [])
+        missed = plant_detail.get("missed", [])
+        critical_missed = plant_detail.get("critical_missed", [])
+        
+        if plants_to_payoff or plants_to_plant or plants_to_hint:
+            lines.extend([
+                "",
+                "**떡밥 활용 상세**",
+            ])
+            if plants_to_plant:
+                lines.append(f"- [심기] 대상 {len(plants_to_plant)}개: {', '.join(plants_to_plant[:3])}")
+            if plants_to_hint:
+                lines.append(f"- [힌트] 대상 {len(plants_to_hint)}개: {', '.join(plants_to_hint[:3])}")
+            if plants_to_payoff:
+                lines.append(f"- [회수] 대상 {len(plants_to_payoff)}개: {', '.join(plants_to_payoff[:3])}")
+            if planted_ok:
+                lines.append(f"- ✅ 잘 반영: {len(planted_ok)}개")
+            if critical_missed:
+                lines.append("- ❌ **★ 회수 누락 (재집필 필수)**:")
+                for cm in critical_missed:
+                    lines.append(f"  - {cm}")
+            elif missed:
+                lines.append("- ⚠️ 약하게 반영:")
+                for m in missed[:3]:
+                    lines.append(f"  - {m}")
     
     return "\n".join(lines)
 
@@ -890,10 +1120,10 @@ def summarize_cumulative_25(
     overalls = [h.get("result", {}).get("overall", 0) for h in validation_history]
     avg_overall = sum(overalls) / n if n > 0 else 0
     
-    # 5축별 평균
+    # 6축별 평균 (v3.0+ PLANT_USAGE 추가)
     axis_keys = [
         "MATERIAL_USAGE", "CHARACTER_CONSISTENCY", "CLIFFHANGER_STRENGTH",
-        "MISE_EN_SCENE", "MARKET_VIABILITY",
+        "MISE_EN_SCENE", "MARKET_VIABILITY", "PLANT_USAGE",
     ]
     axis_avgs = {}
     for ax in axis_keys:
