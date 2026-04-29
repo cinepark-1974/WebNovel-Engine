@@ -477,7 +477,7 @@ def get_role_behavior(role_name: str) -> list:
 
 
 def get_mind_flow_stage_for_episode(ep_num: int, total_eps: int = 42) -> dict:
-    """회차 번호로 마음 흐름 단계 자동 추론 (4명의 전남편들 분포 기준).
+    """[여성향 기본] 회차 번호로 여주 마음 흐름 5단계 자동 추론.
     
     분포 (총 42회):
     - EP1-2 (4.8%): 1단계 불안·정체성 흔들림
@@ -500,6 +500,133 @@ def get_mind_flow_stage_for_episode(ep_num: int, total_eps: int = 42) -> dict:
         stage_idx = 4  # 5단계
     
     return HEROINE_MIND_FLOW_PATTERNS["stages"][stage_idx]
+
+
+def get_hero_mind_flow_stage_for_episode(ep_num: int, total_eps: int = 42) -> dict:
+    """[남성향] 회차 번호로 남성 영웅 마음 흐름 3단계 자동 추론.
+    
+    완성된 영웅은 변화 최소이므로 단계 분배가 다르다.
+    
+    긴 시리즈(20+화) 분포 (총 42회 기준):
+    - EP1-5 (12%): 1단계 각성·동기 발현
+    - EP6-30 (60%): 2단계 관문 통과·세력 확장 (메인)
+    - EP31-42 (28%): 3단계 목표 진화·재정의
+    
+    짧은 시리즈(8화 같은 OTT)에도 EP1이 1단계로 잡히도록 ep_num 기반
+    하한도 함께 적용.
+    """
+    pct = ep_num / total_eps
+    
+    # 짧은 시리즈에서도 첫 1~2회는 무조건 1단계
+    if ep_num <= 1 or pct <= 0.13:
+        stage_idx = 0  # 1단계 — 각성·동기 발현
+    elif pct <= 0.72:
+        stage_idx = 1  # 2단계 — 관문 통과·세력 확장 (메인 단계)
+    else:
+        stage_idx = 2  # 3단계 — 목표 진화·재정의
+    
+    return HERO_MIND_FLOW_PATTERNS["stages"][stage_idx]
+
+
+# ============================================================================
+# WORK_ORIENTATION_DETECTION — 작품 지향 자동 분류 (v3.0의 1차 타겟팅)
+# ============================================================================
+# 콘셉트 카드의 타겟 축(target_persona, target_consumption_tier, genre 등)에서
+# 작품 지향(female / male / neutral)을 자동 추론.
+# 이 분류가 마음 흐름 패턴(여성 5단계 vs 남성 3단계) 선택을 결정한다.
+
+# 명시적 신호 사전
+_FEMALE_GENRES = {
+    "현대로맨스", "로맨스", "로맨스판타지", "로판", "BL",
+    "GL", "할리퀸", "동양로맨스", "서양로맨스", "치정로맨스",
+}
+_MALE_GENRES = {
+    "현대판타지", "정통판타지", "퓨전판타지", "무협",
+    "헌터물", "회귀물", "랭커물", "재벌물", "게임판타지",
+}
+# 장르 혼종 — neutral로 분류 (작가가 명시적으로 지정해야 함)
+_NEUTRAL_GENRES = {
+    "심리 스릴러", "심리스릴러", "범죄 추리", "범죄추리",
+    "추리", "스릴러", "SF", "공포", "호러",
+}
+
+
+def detect_work_orientation(concept: dict) -> str:
+    """[v3.0] 콘셉트 카드의 타겟 축에서 작품 지향 자동 추론.
+    
+    우선순위 (높→낮):
+    1. concept.work_orientation 명시 (작가가 직접 지정)
+    2. concept.heroine_name 존재 → female
+    3. concept.target_persona의 명시적 성별 키워드 (남성향/여성향 결정의 1차 단서)
+    4. concept.genre 매핑 (장르가 명확히 한쪽 지향이면)
+    5. 기본값 → female (웹소설 시장 기본값)
+    
+    Args:
+        concept: 콘셉트 카드 dict
+    
+    Returns:
+        "female" / "male" / "neutral"
+    """
+    if not concept or not isinstance(concept, dict):
+        return "female"
+    
+    # 1) 명시적 지정
+    explicit = concept.get("work_orientation", "")
+    if explicit in ("female", "male", "neutral"):
+        return explicit
+    
+    # 2) heroine_name이 있으면 여성향
+    heroine = concept.get("heroine_name", "")
+    if heroine and heroine.strip():
+        return "female"
+    
+    # 3) target_persona의 성별 키워드 우선 검사 (장르보다 더 강한 신호)
+    target_persona = concept.get("target_persona", "")
+    if isinstance(target_persona, str):
+        tp_lower = target_persona.lower()
+        # 명시적 남성향 신호
+        male_signals = ["남성", "남자 ", "남자.", "남자,", "남성향", "male", " men ", "남성주", "남성 주"]
+        # 명시적 여성향 신호
+        female_signals = ["여성", "여자 ", "여자.", "여자,", "여성향", "female", "women ", "여성주", "여성 주"]
+        
+        has_male = any(kw in tp_lower for kw in male_signals)
+        has_female = any(kw in tp_lower for kw in female_signals)
+        
+        # 한쪽만 명시적으로 있으면 그 방향
+        if has_male and not has_female:
+            return "male"
+        if has_female and not has_male:
+            return "female"
+        # 둘 다 있으면 (혼합 타겟) → 4단계로 넘어감
+    
+    # 4) 장르 매핑
+    genre = concept.get("genre", "").strip()
+    if genre in _FEMALE_GENRES:
+        return "female"
+    if genre in _MALE_GENRES:
+        return "male"
+    if genre in _NEUTRAL_GENRES:
+        return "neutral"
+    
+    # 5) 기본값 — 웹소설 시장 기본값은 여성향
+    return "female"
+
+
+def get_mind_flow_for_orientation(orientation: str) -> dict:
+    """작품 지향에 맞는 마음 흐름 패턴 dict 반환."""
+    if orientation == "male":
+        return HERO_MIND_FLOW_PATTERNS
+    # female / neutral 모두 여성 5단계 (neutral은 추후 별도 패턴 가능)
+    return HEROINE_MIND_FLOW_PATTERNS
+
+
+def get_stage_for_episode_with_orientation(
+    ep_num: int, total_eps: int = 42, orientation: str = "female"
+) -> dict:
+    """작품 지향을 고려한 회차별 마음 흐름 단계 추론."""
+    if orientation == "male":
+        return get_hero_mind_flow_stage_for_episode(ep_num, total_eps)
+    return get_mind_flow_stage_for_episode(ep_num, total_eps)
 
 
 # 하위 호환 별칭
