@@ -3514,3 +3514,210 @@ def build_episode_summary_prompt(episode_text, episode_number):
 [출력]
 200자 이내 요약 텍스트만.
 """.strip()
+
+
+# =================================================================
+# [v3.0 Phase C] 자가 검수 빌더 — 5축 종합 + 재료 활용 LLM 검수
+# =================================================================
+
+def build_validation_prompt(
+    episode_text, ep_number, concept_dict, character_bible_str,
+    rule_validation_result=None, total_eps=42, prev_summary="",
+):
+    """[v3.0 Phase C] 회차 자가 검수 — Sonnet이 5축 채점 + 재료 활용 리포트 생성.
+    
+    engine_validator.py의 1차 텍스트 매칭 결과(rule_validation_result)를
+    참고로 Sonnet이 더 깊이 있는 검수를 수행한다.
+    
+    Args:
+        episode_text: 회차 본문
+        ep_number: 회차 번호
+        concept_dict: 콘셉트 카드 (v3.0 신규 필드 포함)
+        character_bible_str: 캐릭터 바이블 JSON 문자열
+        rule_validation_result: engine_validator의 1차 검수 결과 (참고용)
+        total_eps: 작품 전체 회차 수
+        prev_summary: 직전 회차 요약 (누적 흐름 점검용)
+    
+    Returns:
+        Sonnet 호출용 프롬프트 문자열.
+    """
+    import json as _json
+    
+    concept_str = _json.dumps(concept_dict, ensure_ascii=False, indent=2)[:2500] if concept_dict else "{}"
+    
+    # 1차 검수 결과 요약 (있으면)
+    rule_section = ""
+    if rule_validation_result:
+        used = rule_validation_result.get("used", [])
+        weak = rule_validation_result.get("weak", [])
+        missing = rule_validation_result.get("missing", [])
+        rule_section = f"""
+
+[1차 패턴 매칭 검수 결과 — 참고용]
+사용된 재료 ({len(used)}): {'; '.join(used[:10]) if used else '없음'}
+약하게 반영 ({len(weak)}): {'; '.join(weak[:10]) if weak else '없음'}
+누락 ({len(missing)}): {'; '.join(missing[:10]) if missing else '없음'}
+
+위 결과는 단순 텍스트 매칭 결과이므로, 본문 맥락을 보고 정확하게 재판정하세요."""
+    
+    return f"""[TASK] EP{ep_number} 자가 검수 (v3.0 Phase C)
+당신은 한국 웹소설 시장 베테랑 편집장입니다. 다음 회차를 5축으로 채점하세요.
+
+[회차 본문]
+{episode_text}
+
+[v3.0 콘셉트 카드 — 기획 단계에서 결정된 재료]
+{concept_str}
+
+[캐릭터 바이블]
+{character_bible_str[:2500]}
+
+[직전 회차 요약 — 누적 흐름 점검용]
+{prev_summary[:600] if prev_summary else '(첫 회차 또는 정보 없음)'}
+{rule_section}
+
+[5축 채점 기준]
+1. **MATERIAL_USAGE (재료 활용 / critical)**: 콘셉트 카드의 v3.0 재료(formula_main, formula_sub, relationship_motifs, movement_code 등)가 본문에 실제로 작동하는가. 표지가 행동·풍경·관계로 구현됐는가, 아니면 명시적 언급에 그쳤는가.
+
+2. **CHARACTER_CONSISTENCY (캐릭터 차별화 / critical)**: 9종 인물 역할(narrative_role)이 본문 행동·대사에 묻어나는가. 다중 인물 등장 회차에서 각자 식별 가능한가. 모에 속성(moe_attributes)이 자연스럽게 표현됐는가.
+
+3. **CLIFFHANGER_STRENGTH (클리프행어 강도)**: 회차 끝 임팩트가 강한가. Reveal/Tears/Threat/Choice/Reversal/Slap/Arrival 7유형 중 무엇인가. 결제 전환 동력이 있는가.
+
+4. **MISE_EN_SCENE (묘사·장면)**: 분량 적정한가(4500~6500자 권장). 감각 묘사가 풍부한가. 대사 비율이 적정한가. 첫 등장/재등장 묘사 차등이 적절한가.
+
+5. **MARKET_VIABILITY (시장 트리거)**: 5대 결정 요인(인기/소재/장르/평점/가격) 중 몇 개가 충족됐는가. 타겟 소비자 분화의 결제 트리거가 발현됐는가.
+
+[채점 원칙]
+- 점수는 0~100 정수
+- critical 축(MATERIAL_USAGE, CHARACTER_CONSISTENCY)은 55점 미만이면 자동 REDO
+- 종합 75점 이상 = PASS, 65~74 = WARN, 64 이하 = REDO
+- 재료를 명시적으로 호명하면 감점 (행동·관계로 보여야 함)
+
+[JSON 출력 — 반드시 이 구조 정확히]
+{{
+  "episode": {ep_number},
+  "axes": {{
+    "MATERIAL_USAGE": {{
+      "score": 0,
+      "verdict": "한 줄 평가",
+      "used_materials": ["사용된 v3.0 재료 1", "재료 2"],
+      "weak_materials": ["약하게 반영된 재료"],
+      "missing_materials": ["누락된 재료"],
+      "critical_missing": ["재집필 트리거가 될 핵심 누락"]
+    }},
+    "CHARACTER_CONSISTENCY": {{
+      "score": 0,
+      "verdict": "한 줄 평가",
+      "differentiated_chars": ["역할 잘 드러난 캐릭터"],
+      "flat_chars": ["평면적으로 그려진 캐릭터"],
+      "issues": ["구체적 문제점"]
+    }},
+    "CLIFFHANGER_STRENGTH": {{
+      "score": 0,
+      "verdict": "한 줄 평가",
+      "type_detected": "Reveal|Tears|Threat|Choice|Reversal|Slap|Arrival|None",
+      "impact": "강|중|약"
+    }},
+    "MISE_EN_SCENE": {{
+      "score": 0,
+      "verdict": "한 줄 평가",
+      "length_pass": true,
+      "issues": []
+    }},
+    "MARKET_VIABILITY": {{
+      "score": 0,
+      "verdict": "한 줄 평가",
+      "triggers_met": "0/5",
+      "weak_triggers": []
+    }}
+  }},
+  "overall_score": 0,
+  "grade": "PASS|WARN|REDO",
+  "verdict_summary": "두 줄 종합 평가",
+  "redo_targets": ["재집필 시 우선 보강할 부분 1", "보강할 부분 2"],
+  "cumulative_flow_check": {{
+    "prev_consistency": "이전 회차와의 흐름 일관성 (자연|어색|단절)",
+    "transition_seed_planted": true
+  }}
+}}""".strip()
+
+
+def build_episode_redo_prompt(
+    original_text, ep_number, validation_result,
+    concept_dict, character_bible_str, ep_plot,
+    target_length=5200, rating="15"
+):
+    """[v3.0 Phase C] 회차 재집필 — 검수 결과의 redo_targets만 핀포인트 보강.
+    
+    전체 재집필이 아니라, validation_result의 redo_targets·critical_missing을
+    중심으로 본문을 보강하는 핀포인트 재집필.
+    
+    Args:
+        original_text: 원본 회차 본문
+        ep_number: 회차 번호
+        validation_result: build_validation_prompt() 결과 dict
+        concept_dict: 콘셉트 카드
+        character_bible_str: 캐릭터 바이블 JSON 문자열
+        ep_plot: 회차 플롯
+        target_length: 목표 분량
+        rating: 수위 (15/19)
+    
+    Returns:
+        Opus 호출용 프롬프트 문자열.
+    """
+    import json as _json
+    
+    concept_str = _json.dumps(concept_dict, ensure_ascii=False, indent=2)[:2500] if concept_dict else "{}"
+    val_str = _json.dumps(validation_result, ensure_ascii=False, indent=2)[:3000] if validation_result else "{}"
+    
+    # 재집필 우선순위 추출
+    redo_targets = validation_result.get("redo_targets", []) if validation_result else []
+    critical_missing = []
+    if validation_result:
+        mu_axis = validation_result.get("axes", {}).get("MATERIAL_USAGE", {})
+        critical_missing = mu_axis.get("critical_missing", [])
+    
+    redo_section = ""
+    if redo_targets or critical_missing:
+        redo_section = "\n[★ 재집필 핀포인트 — 반드시 보강할 항목]\n"
+        for i, t in enumerate(redo_targets[:5], 1):
+            redo_section += f"{i}. {t}\n"
+        if critical_missing:
+            redo_section += "\n[핵심 누락 재료 — 반드시 본문에 반영]\n"
+            for m in critical_missing[:5]:
+                redo_section += f"  ❌ {m}\n"
+    
+    return f"""[TASK] EP{ep_number} 핀포인트 재집필
+이전 회차 본문이 자가 검수에서 보강 권장 판정을 받았습니다. 핵심 골격은 유지하되 검수 지적 사항을 본문에 녹여 재집필하세요.
+
+[원본 본문]
+{original_text[:8000]}
+
+[자가 검수 결과 요약]
+{val_str}
+{redo_section}
+
+[v3.0 콘셉트 카드]
+{concept_str}
+
+[회차 플롯]
+{ep_plot[:1500] if ep_plot else '(별도 플롯 없음 — 원본 본문의 전개 유지)'}
+
+[캐릭터 바이블]
+{character_bible_str[:2000]}
+
+[재집필 원칙]
+- 원본의 좋은 부분(대사·장면·전개)은 그대로 유지
+- 위 핀포인트만 본문 안에 자연스럽게 녹임
+- 재료를 명시적으로 호명하지 말고 행동·풍경·관계로 보여줄 것
+- 분량 목표: {target_length}자 (±500자)
+- 수위: {rating}금 등급 준수
+
+[출력]
+재집필된 회차 본문 (제목·회차 번호 포함, 본문만).
+""".strip()
+
+
+# =================================================================
+# [v3.0 Phase C END] 자가 검수 빌더
+# =================================================================
