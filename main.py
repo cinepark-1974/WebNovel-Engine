@@ -338,9 +338,23 @@ def safe_json(raw):
     cleaned = re.sub(r",(\s*[}\]])", r"\1", cleaned)
 
     try:
-        return json.loads(cleaned)
+        result = json.loads(cleaned)
     except json.JSONDecodeError:
         return None
+    
+    # ★ v3.0 안전장치 — LLM이 [{...}] 배열로 감싸 응답한 경우 첫 dict 추출
+    # 콘셉트 카드는 항상 dict이어야 함 (list로 받으면 다운스트림에서 .get() 호출 실패)
+    if isinstance(result, list):
+        # 빈 배열이면 None
+        if not result:
+            return None
+        # 첫 번째 요소가 dict면 그것을 사용
+        if isinstance(result[0], dict):
+            return result[0]
+        # 그 외는 None (예상 못한 구조)
+        return None
+    
+    return result
 
 # ══════════════════════════════════════════════
 # Session State 초기화
@@ -546,6 +560,23 @@ def get_relevant_plants(plant_map, ep_number):
 def render_concept_card(card):
     """컨셉 카드를 화면에 렌더링."""
     if not card:
+        st.info("아직 컨셉 카드가 없습니다.")
+        return
+    
+    # ★ v3.0 안전장치 — list로 잘못 저장된 경우 자동 복구 시도
+    if isinstance(card, list):
+        if card and isinstance(card[0], dict):
+            # 첫 dict 요소를 콘셉트 카드로 사용 + session_state도 복구
+            card = card[0]
+            st.session_state.concept_card = card
+            st.warning("⚠️ 콘셉트 카드가 list 형태로 저장되어 있어 첫 요소를 사용합니다. (자동 복구됨)")
+        else:
+            st.error("⚠️ 콘셉트 카드가 잘못된 형식입니다. 다시 변환해 주세요.")
+            return
+    
+    # dict가 아니면 안전 종료
+    if not isinstance(card, dict):
+        st.error(f"⚠️ 콘셉트 카드가 dict 형식이 아닙니다 ({type(card).__name__}). 다시 변환해 주세요.")
         return
 
     with st.container():
@@ -1159,6 +1190,16 @@ with main_tabs[0]:
                                 MAX_TOKENS_STRUCTURE,
                             )
                         card = safe_json(raw)
+                        # ★ v3.0 안전장치 — dict 형태인지 한 번 더 검증
+                        if card and not isinstance(card, dict):
+                            st.error(
+                                f"콘셉트 카드 변환 결과가 예상치 못한 형식입니다 ({type(card).__name__}). "
+                                f"dict가 아니라 {type(card).__name__}로 반환됨. 다시 시도해 주세요."
+                            )
+                            with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                                st.code(raw[:3000] if raw else "응답 없음", language="json")
+                            card = None
+                        
                         if card:
                             st.session_state.concept_card = card
                             st.success(
