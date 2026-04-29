@@ -340,7 +340,12 @@ def safe_json(raw):
     try:
         result = json.loads(cleaned)
     except json.JSONDecodeError:
-        return None
+        # ★ 자동 복구 시도 — 응답이 토큰 한도에서 잘려서 닫는 괄호 부족한 경우
+        # 균형 안 맞는 { } [ ] 카운트 후 부족분 추가
+        recovered = _try_recover_truncated_json(cleaned)
+        if recovered is None:
+            return None
+        result = recovered
     
     # ★ v3.0 안전장치 — LLM이 [{...}] 배열로 감싸 응답한 경우 첫 dict 추출
     # 콘셉트 카드는 항상 dict이어야 함 (list로 받으면 다운스트림에서 .get() 호출 실패)
@@ -355,6 +360,73 @@ def safe_json(raw):
         return None
     
     return result
+
+
+def _try_recover_truncated_json(text):
+    """잘린 JSON 자동 복구 시도.
+    
+    토큰 한도로 응답이 중간에 끊긴 경우 닫는 괄호를 추가해 파싱 시도.
+    재귀적으로 마지막 미완성 토큰을 잘라내며 시도.
+    """
+    if not text:
+        return None
+    
+    # 1) 균형 카운트
+    open_brace = text.count("{")
+    close_brace = text.count("}")
+    open_bracket = text.count("[")
+    close_bracket = text.count("]")
+    
+    # 2) 부족한 닫는 괄호 자동 추가 (간단 케이스)
+    missing_braces = max(0, open_brace - close_brace)
+    missing_brackets = max(0, open_bracket - close_bracket)
+    
+    # 끝부분의 미완성 문자열 제거 시도
+    # 마지막 따옴표 매칭 안 되면 마지막 따옴표까지만 사용
+    cleaned_text = text.rstrip().rstrip(",")
+    
+    # 짝 안 맞는 따옴표 처리 (간단)
+    quote_count = 0
+    in_escape = False
+    for ch in cleaned_text:
+        if in_escape:
+            in_escape = False
+            continue
+        if ch == "\\":
+            in_escape = True
+            continue
+        if ch == '"':
+            quote_count += 1
+    
+    # 따옴표가 홀수 개면 미완성 문자열이 끝에 있음 — 마지막 따옴표 직전에서 자르기
+    if quote_count % 2 != 0:
+        last_complete_quote = cleaned_text.rfind('"')
+        if last_complete_quote > 0:
+            # 그 직전 콤마/콜론 이전까지 자르기
+            for split_ch in [",", "{", "[", ":"]:
+                idx = cleaned_text.rfind(split_ch, 0, last_complete_quote - 100)
+                if idx > 0:
+                    cleaned_text = cleaned_text[:idx + 1]
+                    if split_ch == ":":
+                        cleaned_text = cleaned_text.rstrip(":")
+                    break
+            cleaned_text = cleaned_text.rstrip(",").rstrip()
+    
+    # 부족한 닫는 괄호 다시 카운트
+    open_brace = cleaned_text.count("{")
+    close_brace = cleaned_text.count("}")
+    open_bracket = cleaned_text.count("[")
+    close_bracket = cleaned_text.count("]")
+    
+    # 닫는 괄호 추가 (안쪽부터 — 보통 array가 안쪽, dict가 바깥)
+    cleaned_text = cleaned_text.rstrip(",").rstrip()
+    cleaned_text += "]" * max(0, open_bracket - close_bracket)
+    cleaned_text += "}" * max(0, open_brace - close_brace)
+    
+    try:
+        return json.loads(cleaned_text)
+    except json.JSONDecodeError:
+        return None
 
 # ══════════════════════════════════════════════
 # Session State 초기화
@@ -1182,13 +1254,24 @@ with main_tabs[0]:
                     else:
                         with st.spinner("v3.0 콘셉트 카드 변환 중..."):
                             ideaseed_str = json.dumps(ideaseed_data, ensure_ascii=False, indent=2)
+                            # max_tokens=8000 — 사랑 상대 다수·풍부한 콘셉트 카드 여유 확보
                             raw = call_claude(
                                 build_ideaseed_to_concept_prompt(
                                     ideaseed_str,
                                     pending_decisions_resolved=resolved_decisions if resolved_decisions else None,
                                 ),
-                                MAX_TOKENS_STRUCTURE,
+                                max_tokens=8000,
                             )
+                        
+                        # 응답 잘림 감지 — 끝에 닫는 } 없으면 토큰 부족 의심
+                        is_truncated = bool(raw) and not raw.rstrip().endswith(("}", "```", "}\n"))
+                        if is_truncated:
+                            st.warning(
+                                "⚠️ 응답이 중간에 잘린 것 같습니다 (끝에 닫는 괄호 누락). "
+                                "사랑 상대가 너무 많거나 콘셉트 카드가 풍부해 토큰 한도 초과 가능성. "
+                                "다시 시도하시면 보통 해결됩니다."
+                            )
+                        
                         card = safe_json(raw)
                         # ★ v3.0 안전장치 — dict 형태인지 한 번 더 검증
                         if card and not isinstance(card, dict):
