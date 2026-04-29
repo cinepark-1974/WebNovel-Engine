@@ -34,6 +34,10 @@ try:
         HERO_MIND_FLOW_PATTERNS,
         READER_CONSUMPTION_TIERS,
         get_mind_flow_stage_for_episode,
+        get_hero_mind_flow_stage_for_episode,
+        detect_work_orientation,
+        get_stage_for_episode_with_orientation,
+        get_mind_flow_for_orientation,
     )
     _V3_CHARACTER_AVAILABLE = True
 except ImportError:
@@ -43,6 +47,10 @@ except ImportError:
     HERO_MIND_FLOW_PATTERNS = {"stages": []}
     READER_CONSUMPTION_TIERS = {}
     get_mind_flow_stage_for_episode = lambda ep, total=42: {}
+    get_hero_mind_flow_stage_for_episode = lambda ep, total=42: {}
+    detect_work_orientation = lambda concept: "female"
+    get_stage_for_episode_with_orientation = lambda ep, total=42, orientation="female": {}
+    get_mind_flow_for_orientation = lambda orientation: {"stages": []}
     _V3_CHARACTER_AVAILABLE = False
 
 try:
@@ -3007,14 +3015,15 @@ def build_character_role_block(characters_full_data, ep_number=0):
 
 
 def build_mind_flow_arc_block(concept, ep_number=0, total_eps=42):
-    """[v3.0 Phase B] 회차별 마음 흐름 단계 자동 추론·주입.
+    """[v3.0 Phase B+] 회차별 마음 흐름 단계 자동 추론·주입.
     
-    여주 마음 흐름 5단계 중 현재 회차가 어느 단계인지 자동 추론하고,
-    해당 단계의 내면 키워드·행동 키워드를 프롬프트에 주입.
-    이전·다음 단계도 함께 안내해 단계 전환의 자연스러움 확보.
+    작품 지향(여성향/남성향/중립)을 콘셉트 카드에서 자동 추론하고,
+    해당 지향에 맞는 마음 흐름 패턴을 선택해 프롬프트에 주입한다.
+    - 여성향: HEROINE_MIND_FLOW_PATTERNS (5단계 — 불안 흔들림 → ... → 자기 회복)
+    - 남성향: HERO_MIND_FLOW_PATTERNS  (3단계 — 각성 → 관문 통과 → 목표 진화)
     
     Args:
-        concept: 콘셉트 카드 dict (heroine_name, mind_flow_target 등)
+        concept: 콘셉트 카드 dict
         ep_number: 현재 회차 번호
         total_eps: 작품 전체 회차 수
     
@@ -3024,32 +3033,67 @@ def build_mind_flow_arc_block(concept, ep_number=0, total_eps=42):
     if not _V3_CHARACTER_AVAILABLE or not ep_number:
         return ""
     
-    heroine_name = ""
-    if concept and isinstance(concept, dict):
-        heroine_name = concept.get("heroine_name", "") or concept.get("protagonist_name", "")
+    # 작품 지향 자동 추론 (1차 타겟팅)
+    orientation = detect_work_orientation(concept) if concept else "female"
     
-    # 현재 단계 추론
+    # 주인공 이름 (지향에 따라 다른 필드)
+    protagonist_name = ""
+    if concept and isinstance(concept, dict):
+        if orientation == "male":
+            # 남성향은 protagonist.name 우선
+            prot = concept.get("protagonist", {})
+            if isinstance(prot, dict):
+                protagonist_name = prot.get("name", "")
+            if not protagonist_name:
+                protagonist_name = concept.get("protagonist_name", "")
+        else:
+            # 여성향은 heroine_name 우선
+            protagonist_name = (
+                concept.get("heroine_name", "")
+                or concept.get("protagonist_name", "")
+            )
+    
+    # 작품 지향에 맞는 단계 추론
     try:
-        current_stage = get_mind_flow_stage_for_episode(ep_number, total_eps)
+        current_stage = get_stage_for_episode_with_orientation(
+            ep_number, total_eps, orientation
+        )
     except Exception:
         return ""
     
     if not current_stage:
         return ""
     
-    stages = HEROINE_MIND_FLOW_PATTERNS.get("stages", [])
+    # 작품 지향에 맞는 패턴 dict 가져오기
+    pattern_dict = get_mind_flow_for_orientation(orientation)
+    stages = pattern_dict.get("stages", [])
     if not stages:
         return ""
     
     current_idx = current_stage.get("stage", 1) - 1
+    total_stages = len(stages)  # 여성 5 / 남성 3
     
-    lines = [f"[★ 마음 흐름 가이드 — EP{ep_number} (총 {total_eps}회) ★]"]
+    # 헤더 — 작품 지향 명시
+    orientation_label = {
+        "female": "여성향",
+        "male":   "남성향",
+        "neutral": "중립",
+    }.get(orientation, "여성향")
     
-    if heroine_name:
-        lines.append(f"여주: {heroine_name}")
+    lines = [
+        f"[★ 마음 흐름 가이드 — EP{ep_number} (총 {total_eps}회) ★]",
+        f"작품 지향: {orientation_label} ({total_stages}단계 흐름)"
+    ]
+    
+    if protagonist_name:
+        role_label = "여주" if orientation == "female" else "주인공"
+        lines.append(f"{role_label}: {protagonist_name}")
     
     # 현재 단계
-    lines.append(f"\n[현재 단계] {current_stage.get('stage', '')}단계 — {current_stage.get('name', '')}")
+    lines.append(
+        f"\n[현재 단계] {current_stage.get('stage', '')}/{total_stages}단계 — "
+        f"{current_stage.get('name', '')}"
+    )
     lines.append(f"  설명: {current_stage.get('description', '')}")
     
     inner = current_stage.get("inner_state_keywords", [])
@@ -3071,25 +3115,42 @@ def build_mind_flow_arc_block(concept, ep_number=0, total_eps=42):
     # 이전 단계 (전환의 자연스러움 확보)
     if current_idx > 0:
         prev_stage = stages[current_idx - 1]
-        lines.append(f"\n[이전 단계] {prev_stage.get('stage', '')}단계 — {prev_stage.get('name', '')}")
+        lines.append(
+            f"\n[이전 단계] {prev_stage.get('stage', '')}단계 — "
+            f"{prev_stage.get('name', '')}"
+        )
         lines.append(f"  → 본 회차에서 이전 단계의 잔향이 자연스럽게 남아있어야 함")
     
     # 다음 단계 (전환점 회차일 때 특히 중요)
-    if current_idx < len(stages) - 1:
+    if current_idx < total_stages - 1:
         next_stage = stages[current_idx + 1]
-        # 다음 회차에서 다음 단계로 진입한다면 전환점 회차
         if ep_number < total_eps:
-            next_ep_stage = get_mind_flow_stage_for_episode(ep_number + 1, total_eps)
+            try:
+                next_ep_stage = get_stage_for_episode_with_orientation(
+                    ep_number + 1, total_eps, orientation
+                )
+            except Exception:
+                next_ep_stage = None
             if next_ep_stage and next_ep_stage.get("stage") != current_stage.get("stage"):
                 lines.append(f"\n[★ 전환점 회차 ★]")
-                lines.append(f"  다음 회차에서 {next_stage.get('stage', '')}단계({next_stage.get('name', '')})로 전환됨")
+                lines.append(
+                    f"  다음 회차에서 {next_stage.get('stage', '')}단계"
+                    f"({next_stage.get('name', '')})로 전환됨"
+                )
                 lines.append(f"  → 본 회차 마지막 부분에 전환의 씨앗이 자연스럽게 심겨야 함")
                 lines.append(f"  → 단, 단계 전환을 노골적으로 선언하지 말 것")
     
+    # 작품 지향별 활용 원칙
     lines.append("\n[활용 원칙]")
-    lines.append("  - 여주의 모든 행동·내면 묘사는 현재 단계의 키워드와 일치해야 함")
-    lines.append("  - 단계를 학술 용어로 호명하지 말 것 (마음 상태로 자연스럽게 표현)")
-    lines.append("  - 단계가 바뀌어도 인물의 어조·말투는 일관 유지")
+    if orientation == "male":
+        lines.append("  - 주인공의 행동·내면은 현재 단계의 키워드와 일치 (완성된 영웅 패턴)")
+        lines.append("  - 결단·자신감·전략적 사고가 회차 본문에 묻어나야 함")
+        lines.append("  - 갈등은 회차 안에서 빠르게 해결 — 다음 회차로 끌지 말 것 (고구마 함정 회피)")
+        lines.append("  - 단계를 학술 용어로 호명하지 말 것 (행동·결정으로 자연스럽게 표현)")
+    else:
+        lines.append("  - 여주의 모든 행동·내면 묘사는 현재 단계의 키워드와 일치해야 함")
+        lines.append("  - 단계를 학술 용어로 호명하지 말 것 (마음 상태로 자연스럽게 표현)")
+        lines.append("  - 단계가 바뀌어도 인물의 어조·말투는 일관 유지")
     
     return "\n".join(lines)
 
