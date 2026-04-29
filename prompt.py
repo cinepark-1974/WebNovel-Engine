@@ -2448,6 +2448,10 @@ def build_ideaseed_to_concept_prompt(ideaseed_json_str, pending_decisions_resolv
     movement_list = list(MOVEMENT_NARRATIVE_PATTERNS.keys()) if _V3_MOTIFS_AVAILABLE else []
     consumption_tiers = list(READER_CONSUMPTION_TIERS.keys()) if _V3_CHARACTER_AVAILABLE else []
     
+    # v2.6.4 레거시 motif (콘셉트 카드 호환용 — 자유 텍스트 금지)
+    legacy_primary_motifs = list(NARRATIVE_MOTIFS["primary"].keys())  # 회귀, 빙의, 환생, 귀환, 차원이동, 일상
+    legacy_secondary_motifs = list(NARRATIVE_MOTIFS["secondary"].keys())  # 성장물, 먼치킨물 등
+    
     # 미결정 사항 처리
     pending_block = ""
     if pending_decisions_resolved:
@@ -2486,29 +2490,43 @@ def build_ideaseed_to_concept_prompt(ideaseed_json_str, pending_decisions_resolv
    - target_consumption_tier (소비자 분화, 1~2개): {consumption_tiers}
    - heroine_name (여주가 있다면 이름. 남성향이면 protagonist.name과 동일)
 
-4. OTT 시리즈 기반 IP라면 (locked_format이 OTT 시리즈인 경우):
+4. ★★★ v2.6.4 레거시 motif 필드 — 반드시 다음 enum에서 정확히 1개 선택 (자유 텍스트 절대 금지):
+   - primary_motif: {legacy_primary_motifs} 중 정확히 1개 (자유 텍스트 작성 금지)
+   - secondary_motif: {legacy_secondary_motifs} 중 정확히 1개 (없으면 빈 문자열, 자유 텍스트 작성 금지)
+   
+   잘못된 예시 (절대 이렇게 하지 말 것):
+   - "운명적_인연물 × 빙의 성장형 로맨스" ← 자유 텍스트 (X)
+   - "연애 쑥맥의 전략적 각성" ← 자유 텍스트 (X)
+   
+   올바른 예시:
+   - primary_motif: "빙의" (enum 1개)
+   - secondary_motif: "성장물" (enum 1개)
+
+5. formula_tags는 작품 태그 (자유 텍스트 OK, 단 짧은 키워드만):
+   예: ["환생", "치정", "역하렘", "빙의"] — 5개 이내
+
+6. OTT 시리즈 기반 IP라면 (locked_format이 OTT 시리즈인 경우):
    - 웹소설 선행 연재로 IP 검증하는 단계임을 의식
    - 시리즈의 톤·정체성을 웹소설 형식으로 정확히 변환
    - 시즌제 구조라면 first season을 우선 설계
-   - 시각적 장면을 산문으로 풀어내는 톤 권장
 
-5. locked_risks_to_address가 있다면 producer_note에 자동 반영
+7. locked_risks_to_address가 있다면 producer_note에 자동 반영
    (회피해야 할 함정으로 표시)
 
 23 관계성 모티프 목록: {motifs_list}
 
-[JSON 출력 — v3.0 콘셉트 카드]
+[JSON 출력 — v3.0 콘셉트 카드. 반드시 단일 dict {{...}}로 출력 (배열로 감싸지 말 것)]
 {{
   "title": "(IdeaSeed의 title_kr 그대로)",
   "genre": "(locked_genre.primary 그대로)",
   "logline": "(locked_logline 그대로)",
-  "formula_tags": [],
-  "primary_motif": "",
-  "secondary_motif": "",
+  "formula_tags": ["짧은 태그 1", "태그 2"],
+  "primary_motif": "(반드시 위 enum 중 1개 — 회귀|빙의|환생|귀환|차원이동|일상)",
+  "secondary_motif": "(반드시 위 enum 중 1개 또는 빈 문자열)",
   "target_persona": "(locked_target에서 추론)",
-  "formula_main": "",
+  "formula_main": "(6 포뮬러 중 1)",
   "formula_sub": "",
-  "movement_code": "",
+  "movement_code": "(5 이동 코드 중 1 또는 빈 문자열)",
   "relationship_motifs": {{
     "primary": "",
     "secondary": [],
