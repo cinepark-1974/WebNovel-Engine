@@ -247,8 +247,9 @@ MODEL_SONNET = "claude-sonnet-4-6"
 MAX_TOKENS_ARC = 12000
 MAX_TOKENS_EPISODE = 16000   # v2.6.2: 8000→16000, 5,000~6,500자 안정 생성
 # v3.0 수정: 본격 작품(시리즈 OTT, 50화 웹소설)의 풍부한 출력 대응
-MAX_TOKENS_STRUCTURE = 8000        # 6000→8000 (콘셉트 카드, 보강, 떡밥 맵)
+MAX_TOKENS_STRUCTURE = 8000        # 6000→8000 (콘셉트 카드, 보강)
 MAX_TOKENS_CHARACTER_BIBLE = 10000 # 신설 — 캐릭터 5명+ 자세한 출력 여유
+MAX_TOKENS_PLANT_MAP = 16000       # 신설 — 떡밥 12~18개 풍부한 출력 (4명의 전남편들 검증)
 MAX_TOKENS_EPISODE_PLOT = 4000     # 신설 — 회차 1개 플롯 (작은 출력)
 MAX_TOKENS_ANALYSIS = 4000
 
@@ -1605,11 +1606,11 @@ with main_tabs[1]:
                             f"실패 시 STEP 2-1에서 Core Arc를 더 간결하게 다시 생성해 주세요."
                         )
 
-                    with st.spinner("떡밥 설계 중..."):
+                    with st.spinner("떡밥 설계 중... (떡밥 12~18개, 30~60초 소요)"):
                         try:
                             raw = call_claude(
                                 build_plant_payoff_prompt(arc_text, chars, arc_type="core"),
-                                max_tokens=8000,  # ★ 6000 → 8000 (떡밥 다수 + Extension예비 여유)
+                                MAX_TOKENS_PLANT_MAP,  # ★ 16000 — 풍부한 떡밥 맵 보장
                             )
                         except Exception as e:
                             st.error(f"❌ LLM 호출 실패: {type(e).__name__}")
