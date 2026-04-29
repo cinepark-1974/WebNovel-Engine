@@ -32,6 +32,8 @@ from prompt import (
     build_ideaseed_to_concept_prompt,
     # v3.0 Phase C — 자가 검수 + 핀포인트 재집필
     build_validation_prompt, build_episode_redo_prompt,
+    # v3.0 Phase D — 기획서 자동 변환
+    build_brief_to_seed_prompt, build_brief_episode_extraction_prompt,
 )
 from profession_pack import (
     PROFESSION_PACK, PROFESSION_KEYWORDS,
@@ -69,6 +71,14 @@ except ImportError:
     summarize_cumulative_25 = lambda *a, **kw: {}
     _V3_VALIDATOR_AVAILABLE = False
 from parser import parse_brief
+# v3.0 Phase D — 기획서 회차 구조 자동 감지
+try:
+    from parser import detect_episode_structure, extract_episode_storylines
+    _V3_PARSER_AVAILABLE = True
+except ImportError:
+    detect_episode_structure = lambda text: {"has_episode_structure": False, "act_markers": [], "episode_markers": [], "max_episode": 0}
+    extract_episode_storylines = lambda text: []
+    _V3_PARSER_AVAILABLE = False
 from docx_builder import (
     build_episode_docx, build_season_docx, build_proposal_docx,
 )
@@ -359,6 +369,9 @@ defaults = {
     "validation_mode": "auto_until_25",  # 1~25화 자동 + 26화부터 결정
     "validation_results": {},            # {ep_num: result_dict}
     "post_25_decided": False,            # 25화 모니터링 후 모드 변경 여부
+    # v3.0 Phase D — 기획서 회차 스토리라인 보존
+    "brief_episode_storylines": {},      # {ep_num: {"label": "", "raw_summary": "", ...}}
+    "brief_act_structure": [],           # ACT 구조 정보
 }
 for k, v in defaults.items():
     if k not in st.session_state:
@@ -645,9 +658,13 @@ with main_tabs[0]:
 
     sub_tabs_1 = st.tabs(["📄 기획서 업로드", "💡 아이디어 생성", "✏️ 직접 입력", "🌱 IdeaSeed JSON"])
 
-    # ── 1-A: 기획서 업로드 ──
+    # ── 1-A: 기획서 업로드 (v3.0 Phase D — 자동 변환 도구) ──
     with sub_tabs_1[0]:
-        st.markdown("기획서 파일(DOCX/HWP/PDF/TXT)을 업로드하면 컨셉 카드가 자동으로 채워집니다.")
+        st.markdown("기획서 파일(DOCX/HWP/PDF/TXT)을 업로드하면 v3.0 콘셉트 카드가 자동으로 만들어집니다.")
+        st.caption(
+            "✨ v3.0 Phase D 자동 변환: 65,000자 이상의 긴 기획서도 안전 처리. "
+            "회차별 스토리라인이 있으면 자동 추출해 STEP 2/3에서 활용 가능."
+        )
 
         uploaded = st.file_uploader(
             "기획서 업로드",
@@ -655,8 +672,35 @@ with main_tabs[0]:
             label_visibility="collapsed",
         )
 
+        # 변환 모드 선택
         if uploaded:
-            if st.button("📖 기획서 파싱 → 컨셉 카드 생성", type="primary", key="parse_brief_btn"):
+            col_mode1, col_mode2 = st.columns([3, 2])
+            with col_mode1:
+                conversion_mode = st.radio(
+                    "변환 방식",
+                    [
+                        "🔍 v3.0 자동 변환 (권장 — 회차 구조 자동 추출 포함)",
+                        "🔧 기본 변환 (v2.6.4 호환 — 분량 압축)",
+                    ],
+                    index=0,
+                    key="conversion_mode_radio",
+                )
+            with col_mode2:
+                extract_episodes = st.checkbox(
+                    "회차별 스토리라인 별도 추출",
+                    value=True,
+                    key="extract_episodes_chk",
+                    help="기획서에 회차 구조가 있으면 별도 JSON으로 보존",
+                    disabled=("기본 변환" in conversion_mode),
+                )
+
+            # 변환 실행 버튼
+            button_label = (
+                "✨ v3.0 자동 변환 → 콘셉트 카드 생성"
+                if "v3.0" in conversion_mode
+                else "📖 기본 변환 → 콘셉트 카드 생성"
+            )
+            if st.button(button_label, type="primary", key="parse_brief_btn"):
                 with st.spinner("기획서 텍스트 추출 중..."):
                     brief_text = parse_brief(uploaded)
                 st.session_state.brief_text = brief_text
@@ -664,20 +708,123 @@ with main_tabs[0]:
                 if len(brief_text) < 200:
                     st.error(f"추출된 텍스트가 너무 짧습니다 ({len(brief_text)}자). 파일을 확인해 주세요.")
                 else:
-                    st.success(f"✅ 텍스트 추출 완료 ({len(brief_text)}자)")
-                    with st.spinner("컨셉 카드 생성 중..."):
-                        raw = call_claude(
-                            build_parse_brief_prompt(brief_text),
-                            MAX_TOKENS_STRUCTURE,
-                        )
-                    card = safe_json(raw)
-                    if card:
-                        st.session_state.concept_card = card
-                        st.success(f"✅ 컨셉 카드 생성 완료 — '{card.get('title','')}'")
+                    st.success(f"✅ 텍스트 추출 완료 ({len(brief_text):,}자)")
+
+                    # ─── v3.0 자동 변환 모드 ───────────────────
+                    if "v3.0" in conversion_mode and _V3_PARSER_AVAILABLE:
+                        # 1) 회차 구조 자동 감지
+                        with st.spinner("회차 구조 자동 감지 중..."):
+                            structure = detect_episode_structure(brief_text)
+                        
+                        if structure["has_episode_structure"]:
+                            n_acts = len(structure["act_markers"])
+                            n_eps = len(structure["episode_markers"])
+                            max_ep = structure["max_episode"]
+                            st.success(
+                                f"📚 회차 구조 자동 감지: ACT {n_acts}개 / "
+                                f"회차 마커 {n_eps}개 / 최대 EP{max_ep}"
+                            )
+                            with st.expander("🔍 감지된 회차 마커 미리보기", expanded=False):
+                                for em in structure["episode_markers"][:20]:
+                                    st.caption(f"EP{em['ep_num']:>2}: {em['label']}")
+                                if len(structure["episode_markers"]) > 20:
+                                    st.caption(f"... 외 {len(structure['episode_markers']) - 20}개")
+                        else:
+                            st.info("회차 구조가 감지되지 않았습니다 — 일반 시놉시스로 처리합니다.")
+                            structure = None
+                        
+                        # 2) 콘셉트 카드 생성 (Sonnet 4.6 1M 컨텍스트 활용)
+                        with st.spinner("v3.0 콘셉트 카드 생성 중... (긴 기획서는 30~60초 소요)"):
+                            try:
+                                raw = call_claude(
+                                    build_brief_to_seed_prompt(brief_text, structure),
+                                    max_tokens=8000,
+                                )
+                            except Exception as e:
+                                st.error(f"❌ 콘셉트 카드 생성 실패: {type(e).__name__}")
+                                st.code(str(e), language="text")
+                                st.markdown(
+                                    "**해결 방법:**\n"
+                                    "1. '🔧 기본 변환' 모드로 다시 시도 (분량 압축 사용)\n"
+                                    "2. 기획서 텍스트의 핵심만 추출해 .txt로 다시 업로드\n"
+                                    "3. 직접 입력 탭에서 수동 입력"
+                                )
+                                raw = ""
+                        
+                        if raw:
+                            card = safe_json(raw)
+                            if card:
+                                st.session_state.concept_card = card
+                                st.success(f"✅ 콘셉트 카드 생성 완료 — '{card.get('title', '')}'")
+                                
+                                # 3) 회차별 스토리라인 별도 추출 (선택)
+                                if extract_episodes and structure and structure["has_episode_structure"]:
+                                    with st.spinner("회차별 스토리라인 구조화 중..."):
+                                        try:
+                                            ep_raw = call_claude(
+                                                build_brief_episode_extraction_prompt(brief_text, structure),
+                                                max_tokens=8000,
+                                            )
+                                            ep_data = safe_json(ep_raw)
+                                            if ep_data:
+                                                episodes = ep_data.get("episodes", [])
+                                                if episodes:
+                                                    # session_state에 저장
+                                                    storyline_dict = {}
+                                                    for ep in episodes:
+                                                        ep_num = ep.get("ep_num", 0)
+                                                        if ep_num > 0:
+                                                            storyline_dict[ep_num] = ep
+                                                    st.session_state.brief_episode_storylines = storyline_dict
+                                                    st.session_state.brief_act_structure = ep_data.get("act_structure", [])
+                                                    
+                                                    quality = ep_data.get("structure_quality", "?")
+                                                    st.success(
+                                                        f"📖 회차 스토리라인 {len(storyline_dict)}개 추출 완료 "
+                                                        f"(자세함: {quality}). STEP 2 빌드업·STEP 3 회차 플롯에서 활용됩니다."
+                                                    )
+                                        except Exception as e:
+                                            st.warning(f"⚠️ 회차 추출 실패 (콘셉트 카드는 생성 완료): {e}")
+                            else:
+                                st.error("콘셉트 카드 파싱 실패. 응답 원본을 확인해 주세요.")
+                                with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                                    st.code(raw[:3000] if raw else "응답 없음", language="json")
+                    
+                    # ─── 기본 변환 모드 (v2.6.4 호환 — 분량 압축) ───────
                     else:
-                        st.error("컨셉 카드 파싱 실패. 아래 응답을 확인하시고 다시 시도해 주세요.")
-                        with st.expander("🔍 디버깅 — LLM 응답 원본"):
-                            st.code(raw[:3000] if raw else "응답 없음", language="json")
+                        if len(brief_text) > 12000:
+                            st.info(
+                                f"📌 기획서가 깁니다 ({len(brief_text):,}자 → 12,000자로 자동 압축). "
+                                f"앞부분(약 10,000자) + 끝부분(2,000자)만 분석에 사용됩니다. "
+                                f"누락된 정보가 있으면 직접 입력 탭에서 보강하세요."
+                            )
+                        
+                        with st.spinner("컨셉 카드 생성 중..."):
+                            try:
+                                raw = call_claude(
+                                    build_parse_brief_prompt(brief_text),
+                                    max_tokens=8000,
+                                )
+                            except Exception as e:
+                                st.error(f"❌ 콘셉트 카드 생성 실패: {type(e).__name__}")
+                                st.code(str(e), language="text")
+                                st.markdown(
+                                    "**해결 방법:**\n"
+                                    "1. 기획서가 매우 길면 핵심 부분만 텍스트(.txt)로 다시 만들어 업로드\n"
+                                    "2. 직접 입력 탭에서 수동 입력\n"
+                                    "3. 아이디어 생성 탭에서 한 줄 아이디어로 시작"
+                                )
+                                raw = ""
+                        
+                        if raw:
+                            card = safe_json(raw)
+                            if card:
+                                st.session_state.concept_card = card
+                                st.success(f"✅ 컨셉 카드 생성 완료 — '{card.get('title','')}'")
+                            else:
+                                st.error("컨셉 카드 파싱 실패. 아래 응답을 확인하시고 다시 시도해 주세요.")
+                                with st.expander("🔍 디버깅 — LLM 응답 원본"):
+                                    st.code(raw[:3000] if raw else "응답 없음", language="json")
 
     # ── 1-B: 아이디어 생성 ──
     with sub_tabs_1[1]:
