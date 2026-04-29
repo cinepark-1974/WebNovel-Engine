@@ -620,17 +620,89 @@ def get_prev_summary(ep_number, count=3):
 
 
 def get_relevant_plants(plant_map, ep_number):
+    """[v3.0 떡밥 활용도 보강] 회차 집필 시 떡밥 맵 정보를 풍부하게 주입.
+    
+    이전 버전: 한 줄 키워드만 ("[심기] 떡밥명: 설명")
+    이번 버전: 심기·힌트·회수 각각에 충분한 정보 + 작가 가이드 + 인접 회차 컨텍스트
+    
+    회수 회차는 payoff_description을 정확히 주입해 LLM이 의도된 회수 방식 구현 가능.
+    """
     if not plant_map or "plants" not in plant_map:
         return "떡밥 맵 없음"
-    relevant = []
-    for p in plant_map["plants"]:
+    
+    plants = plant_map.get("plants", [])
+    if not plants:
+        return "떡밥 맵 비어있음"
+    
+    sections = []  # [심기], [힌트], [회수] 각 섹션 분리
+    plants_to_plant = []
+    plants_to_hint = []
+    plants_to_payoff = []
+    
+    for p in plants:
         if p.get("plant_ep") == ep_number:
-            relevant.append(f"[심기] {p['name']}: {p.get('description','')}")
+            plants_to_plant.append(p)
         elif ep_number in p.get("hints", []):
-            relevant.append(f"[힌트] {p['name']}: 은근히 상기")
+            plants_to_hint.append(p)
         elif p.get("payoff_ep") == ep_number:
-            relevant.append(f"[회수] {p['name']}")
-    return "\n".join(relevant) if relevant else "이번 회차 관련 떡밥 없음"
+            plants_to_payoff.append(p)
+    
+    # ─── [심기] 섹션 ───────────────────────
+    if plants_to_plant:
+        lines = ["▶ [심기] — 이번 회차에 새로 심을 떡밥"]
+        for p in plants_to_plant:
+            ptype = p.get("type", "")
+            payoff_ep = p.get("payoff_ep", "?")
+            desc = p.get("description", "")
+            lines.append(f"  • {p['name']} ({ptype}, EP{payoff_ep}회수)")
+            if desc:
+                lines.append(f"    {desc}")
+            lines.append(f"    [집필 지시] 이 떡밥은 본문에 자연스럽게 등장해야 함. 명시적 강조 금지, 행동·풍경·대사로 심을 것.")
+        sections.append("\n".join(lines))
+    
+    # ─── [힌트] 섹션 ───────────────────────
+    if plants_to_hint:
+        lines = ["▶ [힌트] — 이전에 심은 떡밥을 은근히 상기시킬 회차"]
+        for p in plants_to_hint:
+            ptype = p.get("type", "")
+            plant_ep = p.get("plant_ep", "?")
+            payoff_ep = p.get("payoff_ep", "?")
+            lines.append(f"  • {p['name']} ({ptype}, EP{plant_ep}심기→EP{payoff_ep}회수)")
+            lines.append(f"    [집필 지시] 한두 줄 묘사·대사로 떡밥 존재를 환기. 회수 절대 금지.")
+        sections.append("\n".join(lines))
+    
+    # ─── [회수] 섹션 (가장 중요) ───────────
+    if plants_to_payoff:
+        lines = ["▶ [회수] ★ — 이번 회차에서 정확히 회수해야 할 떡밥"]
+        for p in plants_to_payoff:
+            ptype = p.get("type", "")
+            plant_ep = p.get("plant_ep", "?")
+            desc = p.get("description", "")
+            payoff_desc = p.get("payoff_description", "")
+            lines.append(f"  • {p['name']} ({ptype}, EP{plant_ep}심기)")
+            if desc:
+                lines.append(f"    [원래 떡밥] {desc}")
+            if payoff_desc:
+                lines.append(f"    [회수 방식] {payoff_desc}")
+                lines.append(f"    [집필 지시] 위 회수 방식을 본문에 정확히 구현. 카타르시스 + 독자 만족 보장.")
+            else:
+                lines.append(f"    [집필 지시] 이 떡밥을 자연스럽게 회수. 독자가 '아, 그게 이거였구나' 느낄 수 있게.")
+        sections.append("\n".join(lines))
+    
+    # ─── 떡밥 맵 전체 컨텍스트 (간략) ──────
+    # 회수 회차가 가까운 떡밥(±5화 이내) 미리보기 — 작가가 거시적 흐름 의식하도록
+    upcoming_payoffs = []
+    for p in plants:
+        payoff_ep = p.get("payoff_ep", 0)
+        if isinstance(payoff_ep, int) and 0 < payoff_ep - ep_number <= 5:
+            upcoming_payoffs.append(f"  • EP{payoff_ep}: {p['name']} ({p.get('type','')})")
+    if upcoming_payoffs:
+        sections.append("▶ [예고] 곧 회수될 떡밥 (5화 이내) — 본 회차에 쐐기 박을 것\n" + "\n".join(upcoming_payoffs[:5]))
+    
+    if not sections:
+        return "이번 회차 관련 떡밥 없음 (떡밥 맵의 다른 회차 활용)"
+    
+    return "\n\n".join(sections)
 
 
 def render_concept_card(card):
@@ -2622,15 +2694,18 @@ with main_tabs[2]:
                             st.warning(f"EP{ep_check} {check_rating} 원고 없음.")
                         else:
                             chars_data = st.session_state.character_bible or {}
+                            # ★ v3.0+ PLANT_USAGE 검수용 떡밥 맵
+                            plant_map_for_val = st.session_state.plant_map_core or None
                             
                             # 1차: 패턴 매칭 검수 (빠름·무비용)
-                            with st.spinner("1차 패턴 매칭 검수 중..."):
+                            with st.spinner("1차 패턴 매칭 검수 중... (6축 — 떡밥 활용 포함)"):
                                 rule_result = compute_episode_validation_score(
                                     concept=concept,
                                     character_bible=chars_data,
                                     written_text=text,
                                     ep_number=ep_check,
                                     total_eps=total_eps_for_t,
+                                    plant_map=plant_map_for_val,  # ★ 떡밥 맵 전달
                                 )
                             
                             # 결과 저장
