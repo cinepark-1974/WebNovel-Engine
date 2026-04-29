@@ -199,8 +199,8 @@ st.markdown("""
 # ══════════════════════════════════════════════
 # API Client
 # ══════════════════════════════════════════════
-MODEL_OPUS = "claude-opus-4-20250514"
-MODEL_SONNET = "claude-sonnet-4-20250514"
+MODEL_OPUS = "claude-opus-4-7"
+MODEL_SONNET = "claude-sonnet-4-6"
 MAX_TOKENS_ARC = 12000
 MAX_TOKENS_EPISODE = 16000   # v2.6.2: 8000→16000, 5,000~6,500자 안정 생성을 위해 2배
 MAX_TOKENS_STRUCTURE = 6000
