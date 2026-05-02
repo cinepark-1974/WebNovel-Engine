@@ -249,7 +249,7 @@ MAX_TOKENS_ARC = 12000
 MAX_TOKENS_EPISODE = 16000   # v2.6.2: 8000→16000, 5,000~6,500자 안정 생성
 # v3.0 수정: 본격 작품(시리즈 OTT, 50화 웹소설)의 풍부한 출력 대응
 MAX_TOKENS_STRUCTURE = 8000        # 6000→8000 (콘셉트 카드, 보강)
-MAX_TOKENS_CHARACTER_BIBLE = 10000 # 신설 — 캐릭터 5명+ 자세한 출력 여유
+MAX_TOKENS_CHARACTER_BIBLE = 14000 # 10000→14000 (일관성 규칙 추가로 출력 증가 대응)
 MAX_TOKENS_PLANT_MAP = 16000       # 신설 — 떡밥 12~18개 풍부한 출력 (4명의 전남편들 검증)
 MAX_TOKENS_EPISODE_PLOT = 4000     # 신설 — 회차 1개 플롯 (작은 출력)
 MAX_TOKENS_ANALYSIS = 4000
@@ -1889,7 +1889,7 @@ with main_tabs[1]:
                                     profession_blocks=prof_blocks_text,
                                     prior_facts=prior_facts,  # ★ 일관성 사실 주입
                                 ),
-                                8000,  # 조연 전용 — 8000으로 충분
+                                10000,  # 조연 전용 — 일관성 블록 추가로 8000→10000
                             )
                         except Exception as e:
                             st.error(f"❌ 조연 바이블 생성 실패: {type(e).__name__}")
