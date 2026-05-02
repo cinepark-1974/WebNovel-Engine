@@ -3392,6 +3392,136 @@ with main_tabs[2]:
                         help="엔진 재접속 시 이 JSON을 업로드하면 모든 작업 복원",
                     )
 
+                # ── ★ v3.0+ 마일스톤 조판 다운로드 ────────────────
+                st.divider()
+                sub_header("📚 마일스톤 조판 다운로드 (모바일 리더용)")
+                st.caption(
+                    "함초롬바탕 폰트 · 카카오페이지/리디 모바일 리더 사이즈 · 양쪽 정렬. "
+                    "25화·50화 시점에 일괄 변환해서 작가 검토용으로 사용. "
+                    "회차별 집필은 지금처럼 일반 양식으로 진행하시면 됩니다."
+                )
+                
+                # 작품 진행 상황 — 조판 가능 여부 결정
+                eps_19_count = len(eps_19) if eps_19 else 0
+                eps_15_count = len(eps_15) if eps_15 else 0
+                max_count = max(eps_19_count, eps_15_count)
+                
+                col_ms_19, col_ms_15 = st.columns(2)
+                
+                # 19금 마일스톤
+                with col_ms_19:
+                    st.markdown("**19금 조판**")
+                    if eps_19_count == 0:
+                        st.info("19금 회차가 없습니다.")
+                    else:
+                        # 25화 마일스톤
+                        if eps_19_count >= 25:
+                            try:
+                                from docx_typeset import build_typeset_milestone
+                                ms_25_19 = build_typeset_milestone(
+                                    eps_19, concept, rating="19", milestone=25, platform=platform
+                                )
+                                st.download_button(
+                                    f"📚 1~25화 조판 (19금)",
+                                    data=ms_25_19,
+                                    file_name=f"{title}_1-25화_19금_조판_{date_tag}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key="dl_typeset_25_19",
+                                    use_container_width=True,
+                                )
+                            except ImportError:
+                                st.error("docx_typeset 모듈이 없습니다. GitHub에 추가 필요.")
+                        else:
+                            st.button(
+                                f"📚 1~25화 조판 ({eps_19_count}/25화)",
+                                disabled=True,
+                                use_container_width=True,
+                                help=f"25화 완료 후 활성화 (현재 {eps_19_count}화)",
+                            )
+                        
+                        # 50화 마일스톤
+                        if eps_19_count >= 50:
+                            try:
+                                from docx_typeset import build_typeset_milestone
+                                ms_50_19 = build_typeset_milestone(
+                                    eps_19, concept, rating="19", milestone=50, platform=platform
+                                )
+                                st.download_button(
+                                    f"📚 1~50화 조판 (19금)",
+                                    data=ms_50_19,
+                                    file_name=f"{title}_1-50화_19금_조판_{date_tag}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key="dl_typeset_50_19",
+                                    use_container_width=True,
+                                    type="primary",
+                                )
+                            except ImportError:
+                                pass
+                        else:
+                            st.button(
+                                f"📚 1~50화 조판 ({eps_19_count}/50화)",
+                                disabled=True,
+                                use_container_width=True,
+                                help=f"50화 완료 후 활성화 (현재 {eps_19_count}화)",
+                            )
+                
+                # 15금 마일스톤
+                with col_ms_15:
+                    st.markdown("**15금 조판**")
+                    if eps_15_count == 0:
+                        st.info("15금 회차가 없습니다.")
+                    else:
+                        # 25화 마일스톤
+                        if eps_15_count >= 25:
+                            try:
+                                from docx_typeset import build_typeset_milestone
+                                ms_25_15 = build_typeset_milestone(
+                                    eps_15, concept, rating="15", milestone=25, platform=platform
+                                )
+                                st.download_button(
+                                    f"📚 1~25화 조판 (15금)",
+                                    data=ms_25_15,
+                                    file_name=f"{title}_1-25화_15금_조판_{date_tag}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key="dl_typeset_25_15",
+                                    use_container_width=True,
+                                )
+                            except ImportError:
+                                pass
+                        else:
+                            st.button(
+                                f"📚 1~25화 조판 ({eps_15_count}/25화)",
+                                disabled=True,
+                                use_container_width=True,
+                                help=f"25화 완료 후 활성화 (현재 {eps_15_count}화)",
+                            )
+                        
+                        # 50화 마일스톤
+                        if eps_15_count >= 50:
+                            try:
+                                from docx_typeset import build_typeset_milestone
+                                ms_50_15 = build_typeset_milestone(
+                                    eps_15, concept, rating="15", milestone=50, platform=platform
+                                )
+                                st.download_button(
+                                    f"📚 1~50화 조판 (15금)",
+                                    data=ms_50_15,
+                                    file_name=f"{title}_1-50화_15금_조판_{date_tag}.docx",
+                                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                    key="dl_typeset_50_15",
+                                    use_container_width=True,
+                                    type="primary",
+                                )
+                            except ImportError:
+                                pass
+                        else:
+                            st.button(
+                                f"📚 1~50화 조판 ({eps_15_count}/50화)",
+                                disabled=True,
+                                use_container_width=True,
+                                help=f"50화 완료 후 활성화 (현재 {eps_15_count}화)",
+                            )
+                
                 # ── 개별 회차 다운로드 ──
                 st.divider()
                 sub_header("개별 회차 다운로드")
