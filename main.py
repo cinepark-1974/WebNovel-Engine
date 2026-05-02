@@ -620,6 +620,56 @@ def get_prev_summary(ep_number, count=3):
     return "\n".join(summaries) if summaries else "첫 회차입니다."
 
 
+def make_filename_prefix(concept: dict, max_len: int = 6) -> str:
+    """[v3.0+] 작품 제목에서 파일명 prefix 자동 생성.
+    
+    우선순위:
+    1) concept.title_short (작가가 STEP 1에서 입력한 영어 약어)
+    2) 한글 제목 앞 N자 (조사·공백·특수문자 제거)
+    3) "Untitled" fallback
+    
+    Args:
+        concept: 콘셉트 카드 dict
+        max_len: 최대 길이 (기본 6자)
+    
+    Returns:
+        파일명 안전 prefix (예: "4명의전", "4Husbands", "만물탐정")
+    
+    Examples:
+        "4명의 전남편들은 왜 나를 잊지 못할까" → "4명의전"
+        "만물탐정" → "만물탐정"
+        title_short="4Husbands" → "4Husbands"
+    """
+    if not concept:
+        return "Untitled"
+    
+    # 1) 작가가 입력한 영어 약어 우선
+    short = concept.get("title_short", "").strip()
+    if short:
+        # 영어/숫자/하이픈만 허용, 최대 15자
+        import re
+        cleaned = re.sub(r'[^A-Za-z0-9\-_]', '', short)[:15]
+        if cleaned:
+            return cleaned
+    
+    # 2) 한글 제목 앞부분
+    title = concept.get("title", "").strip()
+    if not title:
+        return "Untitled"
+    
+    # 공백·특수문자 제거 후 앞 N자
+    import re
+    # 한글·영문·숫자만 남기기
+    cleaned = re.sub(r'[^\w가-힣]', '', title.replace(" ", ""))
+    # 윈도우 파일명 금지 문자 제거
+    cleaned = re.sub(r'[<>:"/\\|?*]', '', cleaned)
+    
+    if not cleaned:
+        return "Untitled"
+    
+    return cleaned[:max_len]
+
+
 def get_relevant_plants(plant_map, ep_number):
     """[v3.0 떡밥 활용도 보강] 회차 집필 시 떡밥 맵 정보를 풍부하게 주입.
     
@@ -1382,6 +1432,35 @@ with main_tabs[0]:
         st.divider()
         section_header("현재 컨셉 카드", "CURRENT CARD")
         render_concept_card(st.session_state.concept_card)
+        
+        # ── 파일명 약어 설정 (v3.0+) ──
+        with st.expander("📝 파일명 약어 설정 (회차 다운로드 시 파일명 앞에 붙음)"):
+            current_short = st.session_state.concept_card.get("title_short", "")
+            current_prefix = make_filename_prefix(st.session_state.concept_card)
+            
+            st.caption(
+                f"현재 파일명 prefix: **{current_prefix}** "
+                f"(예: {current_prefix}_EP001_19금.docx)"
+            )
+            
+            col_pf1, col_pf2 = st.columns([2, 1])
+            with col_pf1:
+                new_short = st.text_input(
+                    "영어 약어 (선택, 영문/숫자만)",
+                    value=current_short,
+                    placeholder="예: 4Husbands, Detective, SecretQueen",
+                    key="title_short_input",
+                    help=(
+                        "비워두면 한글 제목 앞 6자가 자동 적용됩니다. "
+                        "윈도우/맥에서 한글 파일명이 깨지는 경우 영어 약어 권장."
+                    ),
+                )
+            with col_pf2:
+                if st.button("💾 약어 저장", key="save_title_short", use_container_width=True):
+                    st.session_state.concept_card["title_short"] = new_short.strip()
+                    new_prefix = make_filename_prefix(st.session_state.concept_card)
+                    st.success(f"적용됨: {new_prefix}")
+                    st.rerun()
 
         # ── v3.0 4축 타겟팅 — 작품 지향 + 소비자 분화 ──
         if _V3_ORIENTATION_AVAILABLE:
@@ -2765,7 +2844,7 @@ with main_tabs[2]:
                         st.download_button(
                             "📄 DOCX",
                             data=docx_bytes,
-                            file_name=f"EP{ep_write:03d}_19금.docx",
+                            file_name=f"{make_filename_prefix(concept)}_EP{ep_write:03d}_19금.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             key=f"dlx19_{ep_write}",
                         )
@@ -2823,7 +2902,7 @@ with main_tabs[2]:
                                 st.download_button(
                                     "📄 DOCX",
                                     data=docx_bytes_15,
-                                    file_name=f"EP{ep_conv:03d}_15금.docx",
+                                    file_name=f"{make_filename_prefix(concept)}_EP{ep_conv:03d}_15금.docx",
                                     mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                                     key=f"dlx15_{ep_conv}",
                                 )
@@ -3539,7 +3618,7 @@ with main_tabs[2]:
                         st.download_button(
                             f"EP{ep_num:03d}. {title_line[:20]}",
                             data=ep_docx_bytes,
-                            file_name=f"EP{ep_num:03d}_19금.docx",
+                            file_name=f"{make_filename_prefix(concept)}_EP{ep_num:03d}_19금.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             key=f"dl_ind_19_{ep_num}",
                         )
@@ -3556,7 +3635,7 @@ with main_tabs[2]:
                         st.download_button(
                             f"EP{ep_num:03d}. {title_line[:20]}",
                             data=ep_docx_bytes,
-                            file_name=f"EP{ep_num:03d}_15금.docx",
+                            file_name=f"{make_filename_prefix(concept)}_EP{ep_num:03d}_15금.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             key=f"dl_ind_15_{ep_num}",
                         )
