@@ -2758,6 +2758,59 @@ with main_tabs[2]:
                                     st.error(f"백업 생성 오류: {e}")
                             st.markdown("---")
 
+                        # ★ v3.0+ 반복·중복 자동 탐지·정리
+                        try:
+                            from repetition_filter import (
+                                detect_repetitions,
+                                auto_clean_safe_repetitions,
+                                generate_repetition_report,
+                            )
+                            
+                            detection = detect_repetitions(result)
+                            auto_count = len(detection.get("auto_clean_targets", []))
+                            review_count = len(detection.get("review_targets", []))
+                            
+                            if auto_count > 0:
+                                # 자동 정리 가능한 경우
+                                with st.container():
+                                    st.warning(
+                                        f"🔁 **반복 자동 탐지 — 정리 가능 {auto_count}개**, "
+                                        f"검토 필요 {review_count}개"
+                                    )
+                                    
+                                    col_clean1, col_clean2 = st.columns([2, 1])
+                                    with col_clean1:
+                                        st.caption(
+                                            "LLM이 분량 채우려 동일 줄을 반복한 케이스. "
+                                            "안전하게 자동 정리 가능합니다."
+                                        )
+                                    with col_clean2:
+                                        if st.button(
+                                            f"🧹 반복 자동 정리",
+                                            key=f"clean_rep_{ep_write}",
+                                            type="primary",
+                                            use_container_width=True,
+                                        ):
+                                            cleaned, log = auto_clean_safe_repetitions(result)
+                                            st.session_state.episodes_19[ep_write] = cleaned
+                                            removed = log.get("removed_chars", 0)
+                                            st.success(
+                                                f"✅ {log.get('removed_count', 0)}개 반복 정리 — "
+                                                f"{removed:,}자 절감 ({len(result):,} → {len(cleaned):,}자)"
+                                            )
+                                            st.rerun()
+                            
+                            # 검토 리포트 (자동·검토 항목 모두)
+                            if auto_count > 0 or review_count > 0:
+                                with st.expander(f"🔍 반복 탐지 상세 리포트 ({auto_count + review_count}건)"):
+                                    report = generate_repetition_report(detection)
+                                    st.markdown(report)
+                            elif review_count == 0 and auto_count == 0:
+                                st.success("✅ 반복·중복 패턴 없음. 본문 깨끗합니다.")
+                        
+                        except ImportError:
+                            pass  # 모듈 없으면 조용히 패스
+
                         # 분량 충족 여부 표시
                         if result_len < min_required:
                             shortage = min_required - result_len
