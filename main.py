@@ -2131,6 +2131,15 @@ with main_tabs[1]:
                                 fail_count += 1
 
                             progress_plot.progress(idx / total_plot_eps)
+                            
+                            # ★ v3.0+ 안전망 — 5회차마다 진행 상황 실시간 표시
+                            done_count = len(st.session_state.episode_plots)
+                            if done_count > 0 and done_count % 5 == 0:
+                                status_plot.info(
+                                    f"💾 진행 중: {done_count}회차 완료 — "
+                                    f"이 시점에서 작업이 끊겨도 {done_count}회차 데이터는 유지됩니다. "
+                                    f"불안하시면 잠시 후 [💾 즉시 백업 JSON] 버튼으로 백업하세요."
+                                )
 
                         final_done = len(st.session_state.episode_plots)
                         if fail_count == 0:
@@ -2142,6 +2151,62 @@ with main_tabs[1]:
                                 f"⚠️ 완료: {final_done}/{total_plot_eps} · 실패: {fail_count}회차 "
                                 "(개별 재생성 탭에서 실패한 회차만 다시 시도하세요)"
                             )
+                        
+                        # ★ v3.0+ 자동 백업 — 일괄 생성 완료 직후 즉시 다운로드 버튼 노출
+                        if final_done > 0:
+                            st.markdown("---")
+                            st.markdown("### 💾 ★ 즉시 백업 권장")
+                            st.warning(
+                                f"**{final_done}회차 플롯이 생성되었습니다.** "
+                                "지금 백업하지 않고 페이지 새로고침/탭 닫기/30분 방치 시 데이터가 사라집니다. "
+                                "아래 버튼으로 즉시 백업하세요."
+                            )
+                            
+                            # 프로젝트 전체 백업 JSON 생성
+                            try:
+                                project_backup = {
+                                    "_engine_version": "v3.0+",
+                                    "_saved_at": _now_iso() if "_now_iso" in dir() else "",
+                                    "_save_reason": f"플롯 {final_done}회차 일괄 생성 직후 자동 백업",
+                                    "concept_card": st.session_state.concept_card,
+                                    "core_arc": st.session_state.core_arc,
+                                    "core_arc_summaries": st.session_state.get("core_arc_summaries", {}),
+                                    "extension_arc": st.session_state.get("extension_arc", []),
+                                    "extension_mode": st.session_state.get("extension_mode", "none"),
+                                    "extension_eps": st.session_state.get("extension_eps", 0),
+                                    "reader_feedback": st.session_state.get("reader_feedback", {}),
+                                    "plant_map_core": st.session_state.plant_map_core,
+                                    "plant_map_extension": st.session_state.get("plant_map_extension", {}),
+                                    "character_bible": st.session_state.character_bible,
+                                    "episode_plots": st.session_state.episode_plots,
+                                    "episodes_19": st.session_state.episodes_19,
+                                    "episodes_15": st.session_state.episodes_15,
+                                    "episode_summaries": st.session_state.get("episode_summaries", {}),
+                                    "producer_note": st.session_state.producer_note,
+                                    "style_dna": st.session_state.get("style_dna", {}),
+                                    "style_strength": st.session_state.get("style_strength", 0.7),
+                                    "brief_text": st.session_state.get("brief_text", ""),
+                                    "intimacy_schedule": st.session_state.get("intimacy_schedule", []),
+                                }
+                                from datetime import datetime
+                                ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                title = (st.session_state.concept_card or {}).get("title", "프로젝트")[:20]
+                                fname = f"{title}_플롯완료_{final_done}화_{ts}.json"
+                                
+                                col_bk1, col_bk2 = st.columns([2, 1])
+                                with col_bk1:
+                                    st.download_button(
+                                        f"💾 즉시 백업 JSON ({final_done}회차 플롯 포함)",
+                                        data=json.dumps(project_backup, ensure_ascii=False, indent=2),
+                                        file_name=fname,
+                                        mime="application/json",
+                                        key="instant_backup_after_plot",
+                                        type="primary",
+                                    )
+                                with col_bk2:
+                                    st.caption(f"파일명: {fname}")
+                            except Exception as e:
+                                st.error(f"백업 JSON 생성 중 오류: {e}")
 
                     # ── 플롯 일괄 다운로드 ──
                     if st.session_state.episode_plots:
@@ -2554,6 +2619,65 @@ with main_tabs[2]:
                             MAX_TOKENS_ANALYSIS,
                         )
                         st.session_state.episode_summaries[ep_write] = summary_raw.strip()
+                        
+                        # ★ v3.0+ 회차마다 즉시 백업 다운로드 버튼 노출
+                        # 회차 집필이 가장 큰 작업이므로 매 회차 백업 권장
+                        ep_count = len(st.session_state.episodes_19)
+                        with st.container():
+                            st.markdown("---")
+                            col_bk_msg, col_bk_btn = st.columns([2, 1])
+                            with col_bk_msg:
+                                if ep_count % 5 == 0:
+                                    st.warning(
+                                        f"💾 ★ **{ep_count}회차 집필 완료 — 백업 권장 시점** "
+                                        f"오른쪽 버튼으로 즉시 백업하세요. 페이지 새로고침/탭 닫기/30분 방치 시 데이터 손실됩니다."
+                                    )
+                                else:
+                                    st.info(
+                                        f"💾 현재 {ep_count}회차 집필 완료. "
+                                        f"5회차마다 백업 권장. 다음 백업: {((ep_count // 5) + 1) * 5}회차"
+                                    )
+                            with col_bk_btn:
+                                # 즉시 백업 JSON 생성
+                                try:
+                                    project_backup = {
+                                        "_engine_version": "v3.0+",
+                                        "_save_reason": f"EP{ep_write} 집필 직후 즉시 백업",
+                                        "concept_card": st.session_state.concept_card,
+                                        "core_arc": st.session_state.core_arc,
+                                        "core_arc_summaries": st.session_state.get("core_arc_summaries", {}),
+                                        "extension_arc": st.session_state.get("extension_arc", []),
+                                        "extension_mode": st.session_state.get("extension_mode", "none"),
+                                        "extension_eps": st.session_state.get("extension_eps", 0),
+                                        "reader_feedback": st.session_state.get("reader_feedback", {}),
+                                        "plant_map_core": st.session_state.plant_map_core,
+                                        "plant_map_extension": st.session_state.get("plant_map_extension", {}),
+                                        "character_bible": st.session_state.character_bible,
+                                        "episode_plots": st.session_state.episode_plots,
+                                        "episodes_19": st.session_state.episodes_19,
+                                        "episodes_15": st.session_state.episodes_15,
+                                        "episode_summaries": st.session_state.get("episode_summaries", {}),
+                                        "producer_note": st.session_state.producer_note,
+                                        "style_dna": st.session_state.get("style_dna", {}),
+                                        "style_strength": st.session_state.get("style_strength", 0.7),
+                                        "brief_text": st.session_state.get("brief_text", ""),
+                                        "intimacy_schedule": st.session_state.get("intimacy_schedule", []),
+                                    }
+                                    from datetime import datetime
+                                    ts = datetime.now().strftime("%Y%m%d_%H%M")
+                                    title = (st.session_state.concept_card or {}).get("title", "프로젝트")[:20]
+                                    fname = f"{title}_EP{ep_write}완료_{ep_count}화_{ts}.json"
+                                    st.download_button(
+                                        f"💾 즉시 백업 ({ep_count}화)",
+                                        data=json.dumps(project_backup, ensure_ascii=False, indent=2),
+                                        file_name=fname,
+                                        mime="application/json",
+                                        key=f"instant_backup_ep_{ep_write}",
+                                        type="primary" if ep_count % 5 == 0 else "secondary",
+                                    )
+                                except Exception as e:
+                                    st.error(f"백업 생성 오류: {e}")
+                            st.markdown("---")
 
                         # 분량 충족 여부 표시
                         if result_len < min_required:
