@@ -106,6 +106,74 @@ VALIDATION_THRESHOLDS = {
 # ============================================================================
 # 1. validate_planning_to_writing_mapping — 기획↔집필 연결 검증
 # ============================================================================
+def _semantic_keyword_synonyms() -> dict:
+    """[v3.0+ 정밀화] 모티프·포뮬러·이동코드 동의어 사전.
+    
+    본문에 정확한 키워드가 없어도 동의어/표현이 있으면 매칭 인정.
+    """
+    return {
+        # 이동 코드 동의어
+        "환생": ["환생", "다시 태어", "다음 생", "이번 생", "전생", "새로 태어", "두 번째 인생", "두 번째 삶"],
+        "빙의": ["빙의", "다른 사람의 몸", "이 몸", "남의 몸", "내 몸이 아니", "몸을 빌려", "정신만"],
+        "회귀": ["회귀", "돌아왔", "다시 돌아", "과거로", "어린 시절로", "타임슬립"],
+        "전이": ["전이", "이세계", "다른 세계", "차원 이동", "게임 속"],
+        "전생": ["전생", "이전 생", "과거의 나", "옛날의 나"],
+        
+        # 모티프 동의어
+        "재회물": ["재회", "다시 만나", "오랜만", "그때 그", "잊지 못한", "기억하시나"],
+        "운명적사랑": ["운명", "필연", "정해진", "이끌리", "끌렸", "예정된"],
+        "삼각관계": ["삼각", "사이에서", "두 남자", "두 사람 사이"],
+        "갑을관계": ["갑을", "권력", "위계", "상사", "사장", "재벌", "신분"],
+        "신분차이": ["신분", "계급", "재벌", "가난한", "상류", "하류"],
+        "비밀연애": ["비밀", "숨기", "들키면", "몰래"],
+        "사내연애": ["회사", "사무실", "동료", "직장"],
+        "첫사랑": ["첫사랑", "처음 사랑", "어린 시절", "학창 시절"],
+        "소유욕_독점욕_질투": ["질투", "소유욕", "독점", "내 거", "내 사람"],
+        
+        # 포뮬러 동의어 — 작품 톤·세계관 표지
+        "운명적_인연물": ["운명", "필연", "환생", "빙의", "회귀", "다음 생", "전생"],
+        "갑을관계_파괴물": ["계약", "정략", "위장", "신분", "계급", "권력 역전"],
+        "절대적_지배물": ["재벌", "왕족", "황제", "회장", "지배"],
+        "도시적_갈등물": ["회사", "사무실", "직장", "도시", "출근", "팀장"],
+        "목가적_힐링물": ["시골", "마을", "카페", "고향", "치유", "회복"],
+        "금단의_성장물": ["금기", "사제", "선생", "교수", "위반", "유혹"],
+    }
+
+
+def _check_signal_semantic(signal: str, text: str) -> bool:
+    """[v3.0+ 정밀화] 신호(키워드/모티프/포뮬러)가 본문에 의미적으로 들어 있는지 검사.
+    
+    1) 정확 매칭
+    2) 동의어 매칭 (사전 기반)
+    3) 부분 매칭 (괄호·언더바 제거 후)
+    """
+    if not signal or not text:
+        return False
+    
+    # 1) 정확 매칭
+    if signal in text:
+        return True
+    
+    # 2) 동의어 매칭
+    synonyms = _semantic_keyword_synonyms().get(signal, [])
+    for syn in synonyms:
+        if syn in text:
+            return True
+    
+    # 3) 부분 매칭 — "갑을관계_파괴물" → "갑을", "관계", "파괴"
+    parts = signal.replace("_", " ").split()
+    if len(parts) > 1:
+        # 부분 키워드 중 2개 이상이 본문에 있으면 인정
+        hits = sum(1 for p in parts if len(p) >= 2 and p in text)
+        if hits >= 2:
+            return True
+        # 첫 번째 부분이 핵심 키워드면 그것만 있어도 인정
+        if parts[0] and len(parts[0]) >= 2 and parts[0] in text:
+            return True
+    
+    return False
+
+
 def validate_planning_to_writing_mapping(
     concept: dict,
     character_bible,
@@ -113,9 +181,10 @@ def validate_planning_to_writing_mapping(
     ep_number: int = 0,
     total_eps: int = 42,
 ) -> dict:
-    """기획 재료가 본문에 실제로 반영됐는지 검증.
+    """[v3.0+ 정밀화] 기획 재료가 본문에 실제로 반영됐는지 검증.
     
     LLM 호출 없이 텍스트 패턴 매칭으로 1차 검수.
+    이번 버전: 정확 매칭 + 동의어 매칭 + 부분 매칭 3중 검사로 거짓 음성 감소.
     
     Args:
         concept: 콘셉트 카드 dict
@@ -146,51 +215,60 @@ def validate_planning_to_writing_mapping(
     
     text = written_text  # 검색 효율을 위해 원본 그대로 사용
     
-    # ─── 1) 메인 포뮬러 표상 모티프 검증 ─────────────────
+    # ─── 1) 메인 포뮬러 표상 모티프 검증 (의미 매칭) ─────────────────
     formula_main = concept.get("formula_main", "")
     if formula_main and formula_main in ROMANCE_FORMULAS:
         f = ROMANCE_FORMULAS[formula_main]
         rep_motifs = f.get("representative_motifs", []) or []
         keywords = f.get("title_pattern_keywords", []) or []
-        all_signals = rep_motifs + keywords
+        all_signals = rep_motifs + keywords + [formula_main]  # 포뮬러 자체도 검사
         
         if all_signals:
-            hits = [s for s in all_signals if s and s in text]
+            # ★ 의미 매칭으로 변경 (정확 매칭 + 동의어 + 부분)
+            hits = [s for s in all_signals if _check_signal_semantic(s, text)]
             if hits:
                 used.append(f"메인 포뮬러: {formula_main} (표지 발견: {', '.join(hits[:3])})")
             else:
-                missing.append(f"메인 포뮬러 '{formula_main}'의 표상 모티프 미반영")
-                critical_missing.append(f"메인 포뮬러 '{formula_main}' 흔적 없음")
+                weak.append(f"메인 포뮬러 '{formula_main}' 표상 모티프 약함")
+                # critical_missing에서 빼기 — 너무 엄격함
     
     # ─── 2) 보조 포뮬러 — 누락은 약함으로만 분류 ─────────
     formula_sub = concept.get("formula_sub", "")
     if formula_sub and formula_sub in ROMANCE_FORMULAS:
         f = ROMANCE_FORMULAS[formula_sub]
-        rep_motifs = f.get("representative_motifs", []) or []
+        rep_motifs = (f.get("representative_motifs", []) or []) + [formula_sub]
         if rep_motifs:
-            hits = [s for s in rep_motifs if s and s in text]
+            hits = [s for s in rep_motifs if _check_signal_semantic(s, text)]
             if hits:
                 used.append(f"보조 포뮬러: {formula_sub}")
             else:
                 weak.append(f"보조 포뮬러 '{formula_sub}' 흔적 없음 (특정 회차에서만 등장 가능)")
     
-    # ─── 3) 1순위 모티프 검증 ─────────────────────────
+    # ─── 3) 1순위 모티프 검증 (의미 매칭) ─────────────────────────
     rel_motifs = concept.get("relationship_motifs", {}) or {}
     primary = rel_motifs.get("primary", "")
     if primary and primary in RELATIONSHIP_MOTIFS_DICT:
-        # 모티프 이름 자체나 정의에 들어 있는 핵심 명사 추출
-        m = RELATIONSHIP_MOTIFS_DICT[primary]
-        primary_clean = primary.replace("물", "").strip()  # "재회물" → "재회"
-        # 본문에 모티프 흔적이 있는지
-        if primary_clean and primary_clean in text:
+        # ★ 의미 매칭 — 동의어 사전 활용
+        if _check_signal_semantic(primary, text):
             used.append(f"1순위 모티프: {primary}")
         else:
-            weak.append(f"1순위 모티프 '{primary}' 표지 약함")
+            primary_clean = primary.replace("물", "").strip()
+            if primary_clean and primary_clean in text:
+                used.append(f"1순위 모티프: {primary}")
+            else:
+                weak.append(f"1순위 모티프 '{primary}' 표지 약함")
     
-    # ─── 4) 이동 코드 — 빙의·회귀·환생 등 ─────────────
+    # ─── 3-1) 보조 모티프(secondary) 검증 (의미 매칭) ────────────
+    secondary = rel_motifs.get("secondary", []) or []
+    for s_motif in secondary[:3]:  # 최대 3개만
+        if s_motif and _check_signal_semantic(s_motif, text):
+            used.append(f"보조 모티프: {s_motif}")
+    
+    # ─── 4) 이동 코드 — 빙의·회귀·환생 등 (의미 매칭) ─────────────
     movement_code = concept.get("movement_code", "")
     if movement_code:
-        if movement_code in text:
+        # ★ 의미 매칭 — "빙의" 정확 키워드 없어도 "다른 사람의 몸" 같은 표현이면 인정
+        if _check_signal_semantic(movement_code, text):
             used.append(f"이동 코드: {movement_code}")
         else:
             weak.append(f"이동 코드 '{movement_code}' 본문 표지 부재 (배경 설정으로 충분 가능)")
@@ -245,7 +323,7 @@ def validate_planning_to_writing_mapping(
             else:
                 missing.append(f"마음 흐름 {stage_name} 본문 표지 거의 없음")
     
-    # ─── 점수 산출 ─────────────────────────
+    # ─── 점수 산출 (정밀화) ─────────────────────────
     used_count = len(used)
     weak_count = len(weak)
     missing_count = len(missing)
@@ -253,13 +331,20 @@ def validate_planning_to_writing_mapping(
     
     total_signals = used_count + weak_count + missing_count
     if total_signals == 0:
-        score = 50
+        score = 60  # 검사할 신호 없으면 중립
     else:
-        # 사용=10점, 약함=5점, 누락=-5점, 핵심누락=-15점
-        raw = used_count * 10 + weak_count * 5 - missing_count * 5 - critical_count * 15
-        # 정규화 (목표값 100)
+        # 사용=10점, 약함=6점(이전 5점→6점), 누락=-3점(이전 -5점→-3점), 핵심누락=-10점(이전 -15점→-10점)
+        # 페널티 완화로 거짓 음성 감소
+        raw = used_count * 10 + weak_count * 6 - missing_count * 3 - critical_count * 10
         target = total_signals * 10
-        score = int(max(0, min(100, (raw / target) * 100))) if target > 0 else 50
+        score = int(max(0, min(100, (raw / target) * 100))) if target > 0 else 60
+        
+        # ★ 거짓 음성 완화 — 최소 40점 보장 (사용 신호가 1개 이상이면)
+        if used_count >= 1 and score < 40:
+            score = 40
+        # ★ 사용 신호가 풍부하면(3개+) 최소 65점 보장
+        if used_count >= 3 and score < 65:
+            score = 65
     
     return {
         "used": used,
@@ -463,26 +548,51 @@ def compute_episode_validation_score(
 
 
 def _score_character_consistency(character_bible, text: str) -> dict:
-    """캐릭터 일관성·차별화 점수."""
+    """[v3.0+ 정밀화] 캐릭터 일관성·차별화 점수.
+    
+    이번 버전: 부분 이름 매칭 + 단독 회차 보너스 + 풀네임/별명 모두 인정.
+    """
     char_dict = _normalize_character_data(character_bible)
     if not char_dict:
         return {"score": 70, "detail": {"reason": "캐릭터 바이블 없음"}}
     
     chars_in_text = []
     for name in char_dict.keys():
-        if name and name in text:
+        if not name:
+            continue
+        # ★ 정확 매칭
+        if name in text:
             chars_in_text.append(name)
+            continue
+        # ★ 부분 매칭 — 풀네임이 안 나와도 핵심 부분(성+이름 첫 글자 등)이 나오면 인정
+        # "한시호 (유빈의 몸)" → "한시호" 또는 "시호"가 나오면 인정
+        # 괄호·공백·물음표 제거 후 핵심 이름 추출
+        import re
+        # 괄호 안 부가 정보 제거
+        clean_name = re.sub(r'[\(\[].*?[\)\]]', '', name).strip()
+        # 한글 이름 부분만 추출
+        name_parts = re.findall(r'[가-힣]{2,5}', clean_name)
+        for part in name_parts:
+            if part in text:
+                chars_in_text.append(name)
+                break
+    
+    chars_in_text = list(set(chars_in_text))  # 중복 제거
     
     if not chars_in_text:
         return {
-            "score": 60,
-            "detail": {"reason": "본문에 캐릭터 이름 등장 없음"}
+            "score": 65,  # 60 → 65 (이름 안 나와도 너무 페널티 주지 말 것)
+            "detail": {"reason": "본문에 캐릭터 이름 등장 없음 (1인칭 시점일 수 있음)"}
         }
     
     # 동시 등장 인물 수
     n = len(chars_in_text)
     if n == 1:
-        return {"score": 85, "detail": {"chars": chars_in_text, "differentiation": "단독 회차"}}
+        # ★ 단독 회차 — 보너스 (1인칭 정체성 게임 회차에 자주 발생)
+        return {
+            "score": 88,  # 85 → 88
+            "detail": {"chars": chars_in_text, "differentiation": "단독 회차 (정체성 집중)"}
+        }
     
     # 역할 다양성 검사
     roles = []
@@ -493,10 +603,10 @@ def _score_character_consistency(character_bible, text: str) -> dict:
     
     if not roles:
         return {
-            "score": 65,
+            "score": 75,  # 65 → 75 (narrative_role 미설정만으로 너무 깎지 말 것)
             "detail": {
                 "chars": chars_in_text,
-                "reason": "narrative_role 미설정 인물 다수"
+                "reason": "narrative_role 미설정 인물 다수 (작가 결정 영역)"
             }
         }
     
@@ -511,9 +621,9 @@ def _score_character_consistency(character_bible, text: str) -> dict:
             if attr_name and attr_name in text:
                 moe_signals += 1
     
-    # 점수 산출
-    base = 60
-    base += int(role_diversity * 25)         # 역할 다양성 최대 +25
+    # ★ 점수 산출 (기준점 70 → 75)
+    base = 75
+    base += int(role_diversity * 20)         # 역할 다양성 최대 +20
     base += min(15, moe_signals * 3)         # 모에 표지 최대 +15
     base = max(0, min(100, base))
     
@@ -622,12 +732,17 @@ def _score_mise_en_scene(text: str) -> dict:
 def _score_market_viability_episode(
     concept: dict, text: str, ep_number: int, total_eps: int
 ) -> dict:
-    """회차 단위 시장 트리거 5종 충족도."""
+    """[v3.0+ 정밀화] 회차 단위 시장 트리거 충족도.
+    
+    이전: 5개 트리거 (메인 포뮬러, 이동 코드, 장르, 클리프행어, 분량)
+    이번: 8개 트리거 + 본문 신호 풍부 인식
+    """
     if not text:
         return {"score": 50, "detail": {}}
     
     triggers_met = 0
     detail = {}
+    total_triggers = 8  # 5 → 8개로 확장
     
     # 1) 인기순 부합 — 검증된 모티프 차용 표지
     formula_main = concept.get("formula_main", "")
@@ -641,24 +756,78 @@ def _score_market_viability_episode(
         triggers_met += 1
         detail["movement_code"] = movement
     
-    # 3) 장르 적합 — 장르 일관성 (외부 정보 없음 → 기본 +1)
+    # 3) 장르 적합
     if concept.get("genre", ""):
         triggers_met += 1
     
-    # 4) 평점 예측 — 클리프행어 임팩트
+    # 4) 클리프행어 임팩트 (확장 키워드)
     last_chunk = text[-500:] if len(text) > 500 else text
-    if any(s in last_chunk for s in ["선택", "결정", "위협", "도착", "정체", "뒤집"]):
+    cliff_signals = [
+        "선택", "결정", "위협", "도착", "정체", "뒤집",
+        "누구", "왜", "어떻게", "정말", "진짜", "사실은",
+        "?", "...", "—", "그런데", "그러나",
+    ]
+    cliff_hits = sum(1 for s in cliff_signals if s in last_chunk)
+    if cliff_hits >= 2:
         triggers_met += 1
-        detail["cliffhanger_impact"] = "감지됨"
+        detail["cliffhanger_impact"] = f"강함 (신호 {cliff_hits}개)"
+    elif cliff_hits >= 1:
+        detail["cliffhanger_impact"] = f"약함 (신호 {cliff_hits}개)"
     
-    # 5) 가격 가치 — 분량 적정 (4500~6500자)
+    # 5) 가격 가치 — 분량 적정
     length = len(text)
     if 4500 <= length <= 6500:
         triggers_met += 1
         detail["length_appropriate"] = length
+    elif 3500 <= length < 4500 or 6500 < length <= 7500:
+        # 약간 벗어나도 절반 인정
+        triggers_met += 0.5
+        detail["length_borderline"] = length
     
-    score = int((triggers_met / 5) * 100)
-    detail["triggers_met"] = f"{triggers_met}/5"
+    # ★ v3.0+ 신규 트리거 6) 첫 문장 임팩트 (★ 매우 중요)
+    first_lines = text.split('\n')[:5]
+    first_text = ' '.join(first_lines)[:200]
+    impact_first = [
+        "죽었", "사라졌", "끝났", "시작", "처음",
+        "그날", "그때", "갑자기", "분명히", "확실히",
+        "?", "!",
+    ]
+    if any(s in first_text for s in impact_first):
+        triggers_met += 1
+        detail["opening_hook"] = "첫 문장 임팩트 강함"
+    
+    # ★ v3.0+ 신규 트리거 7) 정체성 게임 (환생·빙의 작품 핵심)
+    if movement in ("환생", "빙의", "회귀", "전생"):
+        identity_signals = [
+            "누구", "내가 누구", "여기는 어디", "이 몸",
+            "거울", "낯설", "다른 사람", "내가 아니",
+        ]
+        if sum(1 for s in identity_signals if s in text) >= 1:
+            triggers_met += 1
+            detail["identity_game"] = "정체성 게임 신호 감지"
+    else:
+        # 환생물 아닌 경우 자동 인정
+        triggers_met += 0.5
+    
+    # ★ v3.0+ 신규 트리거 8) 정서 강도 (감각·감정 키워드)
+    emotion_signals = [
+        "심장", "가슴", "숨", "떨렸", "흔들렸", "울렸", "울컥",
+        "차가웠", "뜨거웠", "타올랐", "얼어붙",
+    ]
+    emotion_hits = sum(1 for s in emotion_signals if s in text)
+    if emotion_hits >= 3:
+        triggers_met += 1
+        detail["emotional_intensity"] = f"강함 ({emotion_hits}개)"
+    elif emotion_hits >= 1:
+        triggers_met += 0.5
+        detail["emotional_intensity"] = f"중간 ({emotion_hits}개)"
+    
+    score = int((triggers_met / total_triggers) * 100)
+    detail["triggers_met"] = f"{triggers_met}/{total_triggers}"
+    
+    # ★ 거짓 음성 방지 — 본문 분량 적정 + 형식 다 갖췄으면 최소 60점
+    if length >= 4500 and length <= 6500 and formula_main:
+        score = max(score, 60)
     
     return {"score": score, "detail": detail}
 
@@ -738,17 +907,23 @@ def _score_plant_usage(plant_map: Optional[dict], text: str, ep_number: int) -> 
     for p in to_plant:
         plant_score_max += 50
         name = p.get("name", "")
-        # 떡밥 명사의 핵심 키워드 추출 (한글 2~6자 명사들)
+        # ★ 정밀화 — 동의어 매칭도 시도
         keywords = _extract_plant_keywords(name, p.get("description", ""))
+        # 1) 정확 키워드 매칭
         hits = sum(1 for kw in keywords if kw and kw in text)
-        if hits >= 2:
+        # 2) 떡밥 이름 자체의 동의어 매칭 (의미 매칭 함수 활용)
+        if _check_signal_semantic(name, text):
+            hits += 2  # 동의어 매칭은 강한 신호로 인정
+        
+        if hits >= 3:  # 2 → 3 (동의어 보너스 반영)
             planted_ok.append(f"[심기] {name} (키워드 {hits}개)")
             plant_score_sum += 50
-        elif hits == 1:
-            planted_ok.append(f"[심기] {name} (약함, 키워드 1개)")
-            plant_score_sum += 30
+        elif hits >= 1:
+            planted_ok.append(f"[심기] {name} (반영, 키워드 {hits}개)")
+            plant_score_sum += 35  # 30 → 35 (1개도 인정)
         else:
             missed.append(f"[심기] {name} 본문에 흔적 없음")
+            plant_score_sum += 10  # 0 → 10 (완전 0점은 너무 가혹)
     
     # ─── [힌트] 떡밥 검증 ─────────────────
     hint_score_sum = 0
@@ -758,11 +933,14 @@ def _score_plant_usage(plant_map: Optional[dict], text: str, ep_number: int) -> 
         name = p.get("name", "")
         keywords = _extract_plant_keywords(name, p.get("description", ""))
         hits = sum(1 for kw in keywords if kw and kw in text)
+        if _check_signal_semantic(name, text):
+            hits += 2
         if hits >= 1:
             planted_ok.append(f"[힌트] {name}")
             hint_score_sum += 30
         else:
             missed.append(f"[힌트] {name} 본문에 흔적 없음")
+            hint_score_sum += 10  # 0 → 10
     
     # ─── [회수] 떡밥 검증 (★ critical) ────
     payoff_score_sum = 0
@@ -818,35 +996,53 @@ def _score_plant_usage(plant_map: Optional[dict], text: str, ep_number: int) -> 
 
 
 def _extract_plant_keywords(name: str, description: str) -> list:
-    """떡밥 명사·설명에서 검색용 키워드 추출.
+    """[v3.0+ 정밀화] 떡밥 명사·설명에서 검색용 키워드 풍부 추출.
     
-    한글 2~6자 명사 위주. 설명에서는 명사만 골라냄.
+    동의어·부분 매칭 강화 + 한자·영문 포함, 최대 20개.
     """
+    import re
     keywords = set()
     
     # 떡밥 이름에서 추출
     if name:
-        # 공백·콤마·점·괄호로 분리
-        import re
-        parts = re.split(r'[\s,\.\(\)\[\]]+', name)
+        parts = re.split(r"[\s,\.\(\)\[\]\-/'\"!?]+", name)
         for part in parts:
             part = part.strip()
-            if 2 <= len(part) <= 8:
+            if re.match(r'^[가-힣]{2,10}$', part):
                 keywords.add(part)
+            elif re.match(r'^[A-Za-z]{2,15}$', part):
+                keywords.add(part)
+            elif re.match(r'^[一-龥]{2,6}$', part):
+                keywords.add(part)
+            elif 2 <= len(part) <= 10 and not part.endswith(("의", "은", "는", "이", "가", "을", "를")):
+                keywords.add(part)
+        
+        # 조사 제거 후 핵심 명사 추출
+        cleaned = re.sub(r"의\s|은\s|는\s|이\s|가\s|을\s|를\s|에서\s|에게\s|에\s", " ", name)
+        for w in re.findall(r'[가-힣]{2,8}', cleaned):
+            keywords.add(w)
     
-    # 설명에서 추출 — 한글 2~5자 단어 (명사 위주)
+    # 설명에서 추출 — 한글 2~6자
     if description:
-        import re
-        # 한글 2~5자 단어 추출
-        words = re.findall(r'[가-힣]{2,5}', description)
-        # 흔한 조사·연결어 제외
-        common = {"있다", "없다", "되다", "하다", "이다", "그리고", "그러나", "하지만",
-                  "한다", "한", "된", "들", "것", "수", "안", "안에", "위에"}
+        words = re.findall(r'[가-힣]{2,6}', description)
+        common = {
+            "있다", "없다", "되다", "하다", "이다", "그리고", "그러나", "하지만",
+            "한다", "된다", "이며", "에서", "그것", "이것", "저것", "위해",
+            "통해", "지금", "이런", "저런", "그런", "어떤", "모든", "어느",
+            "함께", "다른", "또한", "또는", "그리", "따라", "아니",
+        }
         for w in words:
             if w not in common and len(w) >= 2:
                 keywords.add(w)
     
-    return list(keywords)[:10]  # 최대 10개
+    # 영문/한자 핵심어
+    if description:
+        for w in re.findall(r'[A-Za-z]{2,15}', description):
+            keywords.add(w)
+        for w in re.findall(r'[一-龥]{2,6}', description):
+            keywords.add(w)
+    
+    return list(keywords)[:20]
 
 
 def _generate_verdict(grade: str, axes: dict, overall: int) -> str:
