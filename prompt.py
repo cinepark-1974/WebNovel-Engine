@@ -3986,6 +3986,8 @@ def build_episode_write_prompt(episode_plot, characters, style_dna,
 둘째 줄: 빈 줄
 셋째 줄부터: 본문
 
+★ 작품 제목·IP 홀더 인장은 회차 집필 후 코드가 자동 삽입함. LLM은 회차 제목 + 본문만 출력.
+
 JSON/마크다운/주석/설명 금지. 순수 원고 텍스트만.
 """.strip()
 
