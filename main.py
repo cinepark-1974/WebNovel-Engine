@@ -2881,7 +2881,18 @@ with main_tabs[2]:
                     lines = text.strip().split("\n")
                     title_line = lines[0].strip() if lines else f"EP{ep_write}"
 
-                    col_title, col_dl = st.columns([3, 1])
+                    # ★ v3.0+ 다운로드 권장 안내 강화
+                    st.markdown("---")
+                    st.markdown(
+                        f"### 📥 EP{ep_write} 19금 — 다운로드 권장"
+                    )
+                    st.caption(
+                        "**3개 모두 다운로드를 권장**합니다: "
+                        "DOCX (본문 검토용) + JSON 백업 (위 ⬆️ 자동 백업 버튼) + "
+                        "STEP 3-2에서 15금 변환 후 15금 DOCX"
+                    )
+                    
+                    col_title, col_dl = st.columns([2, 1])
                     with col_title:
                         st.markdown(
                             f'<span class="rating-badge-19">19금</span> '
@@ -2889,17 +2900,19 @@ with main_tabs[2]:
                             unsafe_allow_html=True,
                         )
                     with col_dl:
-                        # 개별 DOCX 다운로드
+                        # 개별 DOCX 다운로드 — 강조
                         plot_data = st.session_state.episode_plots.get(ep_write, {})
                         docx_bytes = build_episode_docx(
                             text, ep_write, concept, plot_data, "19", platform,
                         )
                         st.download_button(
-                            "📄 DOCX",
+                            f"📄 EP{ep_write} 19금 DOCX 다운로드",
                             data=docx_bytes,
                             file_name=f"{make_filename_prefix(concept)}_EP{ep_write:03d}_19금.docx",
                             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
                             key=f"dlx19_{ep_write}",
+                            type="primary",
+                            use_container_width=True,
                         )
                     st.text_area("원고", value=text, height=500, key=f"ep19_{ep_write}")
 
@@ -2928,6 +2941,34 @@ with main_tabs[2]:
                             st.success(f"✅ EP{ep_conv} 15금 변환 완료 ({len(result)}자)")
 
                     if ep_conv in st.session_state.episodes_19 and ep_conv in st.session_state.episodes_15:
+                        # ★ 15금 다운로드 권장 안내
+                        text_15 = st.session_state.episodes_15[ep_conv]
+                        st.markdown("---")
+                        st.markdown(f"### 📥 EP{ep_conv} 15금 — 다운로드 권장")
+                        
+                        col_15dl_1, col_15dl_2 = st.columns([2, 1])
+                        with col_15dl_1:
+                            st.caption(
+                                f"15금 변환 완료 ({len(text_15):,}자). "
+                                "**아래 버튼으로 즉시 DOCX 다운로드**하세요. "
+                                "그래야 19금/15금 두 파일이 모두 작가 PC에 보존됩니다."
+                            )
+                        with col_15dl_2:
+                            plot_data_dl = st.session_state.episode_plots.get(ep_conv, {})
+                            docx_bytes_15_top = build_episode_docx(
+                                text_15, ep_conv, concept, plot_data_dl, "15", platform,
+                            )
+                            st.download_button(
+                                f"📄 EP{ep_conv} 15금 DOCX",
+                                data=docx_bytes_15_top,
+                                file_name=f"{make_filename_prefix(concept)}_EP{ep_conv:03d}_15금.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                key=f"dlx15_top_{ep_conv}",
+                                type="primary",
+                                use_container_width=True,
+                            )
+                        st.markdown("---")
+                        
                         col19, col15 = st.columns(2)
                         with col19:
                             text_19 = st.session_state.episodes_19[ep_conv]
