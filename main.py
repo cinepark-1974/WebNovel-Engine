@@ -670,6 +670,114 @@ def make_filename_prefix(concept: dict, max_len: int = 6) -> str:
     return cleaned[:max_len]
 
 
+def detect_cliffhanger_type(text: str) -> str:
+    """[v3.0+] 본문 마지막 부분에서 클리프행어 유형 자동 감지.
+    
+    7유형: Reveal·Tears·Threat·Choice·Reversal·Slap·Arrival
+    """
+    if not text:
+        return "Choice"  # 기본값
+    
+    last_chunk = text[-600:] if len(text) > 600 else text
+    
+    signals = [
+        ("Reveal", ["밝혀졌", "드러났", "알게 되", "그제야 알", "정체", "사실은"]),
+        ("Tears", ["눈물", "흐느꼈", "울었", "흐려진", "젖은"]),
+        ("Threat", ["위험", "위협", "노려보", "다가왔", "얼어붙"]),
+        ("Slap", ["뺨", "쳤다", "후려", "주먹", "맞았"]),
+        ("Reversal", ["뒤집힌", "달랐다", "정반대", "예상과 달", "착각"]),
+        ("Arrival", ["도착했", "들어왔", "나타났", "마주쳤", "문이 열렸"]),
+        ("Choice", ["선택", "결정해", "결정해야", "갈림길", "기로", "어떻게"]),
+    ]
+    
+    best_type = None
+    best_count = 0
+    for ctype, patterns in signals:
+        hits = sum(1 for p in patterns if p in last_chunk)
+        if hits > best_count:
+            best_count = hits
+            best_type = ctype
+    
+    return best_type or "Choice"
+
+
+def add_meta_inscription(
+    text: str,
+    concept: dict,
+    rating: str = "19",
+    platform: str = "카카오페이지",
+) -> str:
+    """[v3.0+ 단순화] 회차 본문 첫머리에 작품 제목 + IP 홀더만 삽입.
+    
+    형식:
+        {작품 전체 제목}
+        {IP 홀더}
+        
+        EP{N}. 회차 제목
+        
+        [본문]
+    
+    원칙:
+    - 분량·수위·플랫폼 등 자동 감지 정보는 넣지 않음 (작가 요청)
+    - 작품 제목과 IP 홀더만 — 나중에 일괄 수정 가능
+    - 워드 스타일과 결합하면 51회차 한 번에 수정 가능
+    
+    이미 인장이 있으면 갱신, 없으면 추가.
+    """
+    if not text:
+        return text
+    
+    work_title = ""
+    if concept:
+        work_title = concept.get("title", "").strip()
+    if not work_title:
+        work_title = "(제목 미지정)"
+    
+    ip_holder = "블루진픽처스"  # 기본 IP 홀더 — concept에 'ip_holder' 키 있으면 그것 사용
+    if concept and concept.get("ip_holder"):
+        ip_holder = concept["ip_holder"]
+    
+    lines = text.split('\n')
+    if not lines:
+        return text
+    
+    # 기존 인장 감지·제거 로직
+    # 패턴 1: 작품 제목 + IP 홀더가 이미 있는 경우
+    has_simple_inscription = (
+        len(lines) >= 2 
+        and lines[0].strip() and lines[1].strip()
+        and not lines[0].strip().startswith("EP")  # 첫 줄이 EP가 아님 = 인장 있음
+    )
+    # 패턴 2: 과거 메타라인(장르·분량·수위) 있는 경우
+    has_old_meta = False
+    if len(lines) >= 2 and lines[0].strip().startswith("EP"):
+        second = lines[1].strip()
+        if "장르:" in second and "분량:" in second:
+            has_old_meta = True
+    
+    # 회차 제목·본문 추출
+    if has_simple_inscription:
+        # 이미 작품제목 + IP홀더가 있으면 그 다음부터가 회차 제목
+        body_start = 2
+        while body_start < len(lines) and not lines[body_start].strip():
+            body_start += 1
+    elif has_old_meta:
+        # 과거 메타라인 제거
+        body_start = 2
+        while body_start < len(lines) and not lines[body_start].strip():
+            body_start += 1
+    else:
+        # 인장 없음 — 첫 줄이 EP 제목
+        body_start = 0
+    
+    rest_lines = lines[body_start:]
+    while rest_lines and not rest_lines[0].strip():
+        rest_lines = rest_lines[1:]
+    rest_text = '\n'.join(rest_lines).strip()
+    
+    return f"{work_title}\n{ip_holder}\n\n{rest_text}"
+
+
 def get_relevant_plants(plant_map, ep_number):
     """[v3.0 떡밥 활용도 보강] 회차 집필 시 떡밥 맵 정보를 풍부하게 주입.
     
@@ -1460,6 +1568,31 @@ with main_tabs[0]:
                     st.session_state.concept_card["title_short"] = new_short.strip()
                     new_prefix = make_filename_prefix(st.session_state.concept_card)
                     st.success(f"적용됨: {new_prefix}")
+                    st.rerun()
+        
+        # ── v3.0+ IP 홀더 설정 (작품 인장에 사용) ──
+        with st.expander("🏢 IP 홀더 설정 (회차 본문 인장 — 회차마다 자동 삽입)"):
+            current_holder = st.session_state.concept_card.get("ip_holder", "블루진픽처스")
+            
+            st.caption(
+                "회차 집필 시 본문 첫머리에 자동 삽입되는 정보입니다. "
+                "워드 스타일이 적용되어 나중에 일괄 수정 가능합니다.\n\n"
+                f"**현재 인장 형식**:\n"
+                f"```\n{st.session_state.concept_card.get('title', '')}\n{current_holder}\n\nEP1. 회차 제목\n```"
+            )
+            
+            col_ip1, col_ip2 = st.columns([2, 1])
+            with col_ip1:
+                new_holder = st.text_input(
+                    "IP 홀더 (저작권 표기)",
+                    value=current_holder,
+                    placeholder="예: 블루진픽처스, 작가명, 회사명",
+                    key="ip_holder_input",
+                )
+            with col_ip2:
+                if st.button("💾 IP 홀더 저장", key="save_ip_holder", use_container_width=True):
+                    st.session_state.concept_card["ip_holder"] = new_holder.strip()
+                    st.success(f"적용됨: {new_holder.strip()}")
                     st.rerun()
 
         # ── v3.0 4축 타겟팅 — 작품 지향 + 소비자 분화 ──
@@ -2692,6 +2825,11 @@ with main_tabs[2]:
                         target_len = platform_spec["target"]
                         result_len = len(result)
 
+                        # ★ v3.0+ 메타라인 인장 자동 삽입
+                        result = add_meta_inscription(
+                            result, concept, rating="19", platform=platform
+                        )
+
                         st.session_state.episodes_19[ep_write] = result
                         summary_raw = call_claude(
                             build_episode_summary_prompt(result, ep_write),
@@ -2900,11 +3038,15 @@ with main_tabs[2]:
                             unsafe_allow_html=True,
                         )
                     with col_dl:
-                        # 개별 DOCX 다운로드 — 강조
+                        # 개별 DOCX 다운로드 — 강조 (★ 작품 인장 + 워드 스타일 적용)
                         plot_data = st.session_state.episode_plots.get(ep_write, {})
-                        docx_bytes = build_episode_docx(
-                            text, ep_write, concept, plot_data, "19", platform,
-                        )
+                        try:
+                            from docx_typeset import build_styled_episode_docx
+                            docx_bytes = build_styled_episode_docx(text, f"EP{ep_write}")
+                        except ImportError:
+                            docx_bytes = build_episode_docx(
+                                text, ep_write, concept, plot_data, "19", platform,
+                            )
                         st.download_button(
                             f"📄 EP{ep_write} 19금 DOCX 다운로드",
                             data=docx_bytes,
@@ -2937,6 +3079,10 @@ with main_tabs[2]:
                                 MAX_TOKENS_EPISODE,
                             )
                         if result:
+                            # ★ v3.0+ 메타라인 인장 자동 삽입
+                            result = add_meta_inscription(
+                                result, concept, rating="15", platform=platform
+                            )
                             st.session_state.episodes_15[ep_conv] = result
                             st.success(f"✅ EP{ep_conv} 15금 변환 완료 ({len(result)}자)")
 
@@ -2955,9 +3101,13 @@ with main_tabs[2]:
                             )
                         with col_15dl_2:
                             plot_data_dl = st.session_state.episode_plots.get(ep_conv, {})
-                            docx_bytes_15_top = build_episode_docx(
-                                text_15, ep_conv, concept, plot_data_dl, "15", platform,
-                            )
+                            try:
+                                from docx_typeset import build_styled_episode_docx
+                                docx_bytes_15_top = build_styled_episode_docx(text_15, f"EP{ep_conv}")
+                            except ImportError:
+                                docx_bytes_15_top = build_episode_docx(
+                                    text_15, ep_conv, concept, plot_data_dl, "15", platform,
+                                )
                             st.download_button(
                                 f"📄 EP{ep_conv} 15금 DOCX",
                                 data=docx_bytes_15_top,
@@ -2990,9 +3140,13 @@ with main_tabs[2]:
                                 )
                             with col_h2:
                                 plot_data = st.session_state.episode_plots.get(ep_conv, {})
-                                docx_bytes_15 = build_episode_docx(
-                                    text_15, ep_conv, concept, plot_data, "15", platform,
-                                )
+                                try:
+                                    from docx_typeset import build_styled_episode_docx
+                                    docx_bytes_15 = build_styled_episode_docx(text_15, f"EP{ep_conv}")
+                                except ImportError:
+                                    docx_bytes_15 = build_episode_docx(
+                                        text_15, ep_conv, concept, plot_data, "15", platform,
+                                    )
                                 st.download_button(
                                     "📄 DOCX",
                                     data=docx_bytes_15,
@@ -3706,9 +3860,13 @@ with main_tabs[2]:
                         text = eps_19[ep_num]
                         title_line = text.strip().split("\n")[0] if text.strip() else f"EP{ep_num}"
                         plot_data = plots.get(ep_num, {})
-                        ep_docx_bytes = build_episode_docx(
-                            text, ep_num, concept, plot_data, "19", platform,
-                        )
+                        try:
+                            from docx_typeset import build_styled_episode_docx
+                            ep_docx_bytes = build_styled_episode_docx(text, f"EP{ep_num}")
+                        except ImportError:
+                            ep_docx_bytes = build_episode_docx(
+                                text, ep_num, concept, plot_data, "19", platform,
+                            )
                         st.download_button(
                             f"EP{ep_num:03d}. {title_line[:20]}",
                             data=ep_docx_bytes,
@@ -3723,9 +3881,13 @@ with main_tabs[2]:
                         text = eps_15[ep_num]
                         title_line = text.strip().split("\n")[0] if text.strip() else f"EP{ep_num}"
                         plot_data = plots.get(ep_num, {})
-                        ep_docx_bytes = build_episode_docx(
-                            text, ep_num, concept, plot_data, "15", platform,
-                        )
+                        try:
+                            from docx_typeset import build_styled_episode_docx
+                            ep_docx_bytes = build_styled_episode_docx(text, f"EP{ep_num}")
+                        except ImportError:
+                            ep_docx_bytes = build_episode_docx(
+                                text, ep_num, concept, plot_data, "15", platform,
+                            )
                         st.download_button(
                             f"EP{ep_num:03d}. {title_line[:20]}",
                             data=ep_docx_bytes,
