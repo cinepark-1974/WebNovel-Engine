@@ -3764,6 +3764,7 @@ with main_tabs[2]:
                                 disabled=True,
                                 use_container_width=True,
                                 help=f"25화 완료 후 활성화 (현재 {eps_19_count}화)",
+                                key="btn_disabled_25_19",
                             )
                         
                         # 50화 마일스톤
@@ -3790,6 +3791,7 @@ with main_tabs[2]:
                                 disabled=True,
                                 use_container_width=True,
                                 help=f"50화 완료 후 활성화 (현재 {eps_19_count}화)",
+                                key="btn_disabled_50_19",
                             )
                 
                 # 15금 마일스톤
@@ -3821,6 +3823,7 @@ with main_tabs[2]:
                                 disabled=True,
                                 use_container_width=True,
                                 help=f"25화 완료 후 활성화 (현재 {eps_15_count}화)",
+                                key="btn_disabled_25_15",
                             )
                         
                         # 50화 마일스톤
@@ -3847,6 +3850,7 @@ with main_tabs[2]:
                                 disabled=True,
                                 use_container_width=True,
                                 help=f"50화 완료 후 활성화 (현재 {eps_15_count}화)",
+                                key="btn_disabled_50_15",
                             )
                 
                 # ── 개별 회차 다운로드 ──
