@@ -261,21 +261,75 @@ def get_client():
 
 
 def call_claude(prompt, max_tokens=4096, model=None, system=None):
+    """[v3.0+ 에러 처리 보강] API 호출 + 재시도 + 명확한 에러 표시.
+    
+    이전: 에러 시 silent fail → 작가가 원인 모름
+    이번: 에러 시 명확한 메시지 + 1회 자동 재시도 + None 반환
+    """
+    import time
+    
     if model is None:
         model = MODEL_SONNET
     if system is None:
         system = SYSTEM_PROMPT
-    client = get_client()
-    full = []
-    with client.messages.stream(
-        model=model,
-        max_tokens=max_tokens,
-        system=system,
-        messages=[{"role": "user", "content": prompt}],
-    ) as stream:
-        for text in stream.text_stream:
-            full.append(text)
-    return "".join(full)
+    
+    last_error = None
+    for attempt in range(2):  # 최대 2번 시도 (원본 + 재시도 1회)
+        try:
+            client = get_client()
+            full = []
+            with client.messages.stream(
+                model=model,
+                max_tokens=max_tokens,
+                system=system,
+                messages=[{"role": "user", "content": prompt}],
+            ) as stream:
+                for text in stream.text_stream:
+                    full.append(text)
+            
+            result = "".join(full)
+            
+            # 빈 응답 체크
+            if not result or len(result.strip()) < 50:
+                last_error = f"API 응답 너무 짧음 ({len(result)}자) — 안전 필터 또는 토큰 부족 가능"
+                if attempt == 0:
+                    time.sleep(2)
+                    continue  # 재시도
+                # 재시도도 실패 — UI에 표시
+                try:
+                    import streamlit as _st
+                    _st.error(f"⚠️ API 응답 부족 (2회 시도 모두 실패): {last_error}")
+                    _st.caption("프롬프트 길이·안전 필터·일시적 API 문제 가능. 잠시 후 다시 시도하세요.")
+                except Exception:
+                    pass
+                return ""
+            
+            return result
+        
+        except Exception as e:
+            last_error = f"{type(e).__name__}: {str(e)[:200]}"
+            if attempt == 0:
+                # 첫 시도 실패 — 잠시 대기 후 재시도
+                time.sleep(3)
+                continue
+            
+            # 재시도도 실패 — UI에 명확히 표시
+            try:
+                import streamlit as _st
+                _st.error(f"❌ API 호출 실패 (2회 시도): {last_error}")
+                _st.caption(
+                    "원인 가능성:\n"
+                    "- 네트워크 오류 (잠시 후 재시도)\n"
+                    "- API rate limit (1분 후 재시도)\n"
+                    "- 토큰 한도 초과 (입력 또는 출력)\n"
+                    "- 안전 필터 차단\n"
+                    "- API 키 인증 오류"
+                )
+            except Exception:
+                pass
+            return ""
+    
+    return ""
 
 
 def call_claude_opus(prompt, max_tokens=8000, system=None):
@@ -3078,13 +3132,24 @@ with main_tabs[2]:
                                 build_rating_convert_prompt(text_19),
                                 MAX_TOKENS_EPISODE,
                             )
-                        if result:
+                        if result and len(result.strip()) >= 100:
                             # ★ v3.0+ 메타라인 인장 자동 삽입
                             result = add_meta_inscription(
                                 result, concept, rating="15", platform=platform
                             )
                             st.session_state.episodes_15[ep_conv] = result
                             st.success(f"✅ EP{ep_conv} 15금 변환 완료 ({len(result)}자)")
+                        else:
+                            # ★ silent fail 방지 — 결과 없으면 명확하게 알림
+                            st.error(
+                                f"❌ EP{ep_conv} 15금 변환 실패. "
+                                f"응답 길이: {len(result) if result else 0}자.\n\n"
+                                "**해결 방법:**\n"
+                                "1. 브라우저 새로고침 후 재시도\n"
+                                "2. PC 휴면 모드 해제 (Streamlit 세션 끊김 방지)\n"
+                                "3. 잠시 대기 후 재시도 (API rate limit 가능)\n"
+                                "4. 19금 본문이 너무 짧거나 비어있는지 확인"
+                            )
 
                     if ep_conv in st.session_state.episodes_19 and ep_conv in st.session_state.episodes_15:
                         # ★ 15금 다운로드 권장 안내
