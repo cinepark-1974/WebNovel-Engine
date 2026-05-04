@@ -3819,6 +3819,87 @@ with main_tabs[2]:
                         help="엔진 재접속 시 이 JSON을 업로드하면 모든 작업 복원",
                     )
 
+                # ── ★ v3.0+ 시즌 종합 검증 보고서 ─────────────────
+                st.divider()
+                sub_header("🎯 시즌 종합 검증 보고서")
+                
+                n_eps_19 = len([k for k, v in eps_19.items() if v])
+                n_eps_15 = len([k for k, v in eps_15.items() if v])
+                
+                if n_eps_19 < 5:
+                    st.caption(
+                        "5화 이상 집필 후 활성화됩니다. "
+                        "현재 19금 " + str(n_eps_19) + "화 / 15금 " + str(n_eps_15) + "화."
+                    )
+                else:
+                    st.caption(
+                        f"전체 {n_eps_19}화 일괄 검증 — "
+                        "분량·캐릭터·정체성 키워드·떡밥·클리프행어 7가지 항목 진단 후 "
+                        "약 4-5쪽 보고서로 출력. 출판사 제출 시 부가 자료로도 활용 가능."
+                    )
+                    
+                    col_rpt1, col_rpt2 = st.columns([1, 2])
+                    with col_rpt1:
+                        if st.button(
+                            "🎯 종합 검증 실행",
+                            type="primary",
+                            key="run_season_report",
+                            use_container_width=True,
+                        ):
+                            with st.spinner("50화 분석 중..."):
+                                try:
+                                    from season_report import analyze_season, build_season_report_docx
+                                    
+                                    analysis = analyze_season(
+                                        eps_19,
+                                        eps_15,
+                                        character_bible=st.session_state.character_bible,
+                                        plant_map=st.session_state.plant_map_core,
+                                    )
+                                    
+                                    if analysis:
+                                        work_title = concept.get("title", "(제목 미지정)")
+                                        ip_holder = concept.get("ip_holder", "블루진픽처스")
+                                        
+                                        report_bytes = build_season_report_docx(
+                                            analysis, work_title, ip_holder
+                                        )
+                                        
+                                        # session_state에 저장 (다운로드용)
+                                        st.session_state["_season_report_bytes"] = report_bytes
+                                        st.session_state["_season_report_analysis"] = analysis
+                                        
+                                        st.success(
+                                            f"✅ 검증 완료! 종합 점수 "
+                                            f"**{analysis['scores']['overall']}/100**"
+                                        )
+                                    else:
+                                        st.error("분석 실패 — 회차 본문 없음")
+                                except Exception as e:
+                                    st.error(f"보고서 생성 실패: {e}")
+                    
+                    with col_rpt2:
+                        if "_season_report_bytes" in st.session_state:
+                            analysis = st.session_state.get("_season_report_analysis", {})
+                            scores = analysis.get("scores", {})
+                            
+                            # 점수 4개 한 줄에 표시
+                            st.markdown(
+                                f"분량 **{scores.get('length', 0)}** · "
+                                f"정체성 **{scores.get('identity', 0)}** · "
+                                f"클리프 **{scores.get('duplication', 0)}** · "
+                                f"종합 **{scores.get('overall', 0)}**"
+                            )
+                            
+                            st.download_button(
+                                "📥 보고서 DOCX 다운로드",
+                                data=st.session_state["_season_report_bytes"],
+                                file_name=f"{title}_시즌1_종합검증보고서_{date_tag}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                key="dl_season_report",
+                                use_container_width=True,
+                            )
+
                 # ── ★ v3.0+ 마일스톤 조판 다운로드 ────────────────
                 st.divider()
                 sub_header("📚 마일스톤 조판 다운로드 (모바일 리더용)")
