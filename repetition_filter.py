@@ -265,7 +265,10 @@ def _detect_similar_paragraphs(text: str, threshold: float = 0.5) -> list:
 
 
 def _detect_word_overuse(text: str) -> list:
-    """과다 사용 단어 탐지 (통계만 — 자동 삭제 안 함)."""
+    """[v3.0+ 보강] 과다 사용 단어 탐지 (통계 + 정체성 키워드 전용 검사)."""
+    if not text:
+        return []
+    
     words = re.findall(r'[가-힣]{3,}', text)
     if not words:
         return []
@@ -273,7 +276,6 @@ def _detect_word_overuse(text: str) -> list:
     word_counter = Counter(words)
     total = len(words)
     
-    # 흔한 동사·연결어 제외
     common = {
         "있었다", "없었다", "되었다", "이었다", "것이다", "그것이",
         "그리고", "그러나", "하지만", "그래서", "따라서", "그러면",
@@ -290,9 +292,44 @@ def _detect_word_overuse(text: str) -> list:
                 "word": word,
                 "count": count,
                 "ratio_percent": round(ratio * 100, 2),
+                "type": "일반 단어",
             })
     
-    return overused[:5]
+    # ★ v3.0+ 정체성 키워드 전용 검사 (숫자+나이 조합)
+    # 한국 웹소설 LLM이 자주 빠지는 함정:
+    # 주인공 정체성을 매 단락마다 강조하는 강박
+    # 주의: 한국어는 \b 워드 경계가 안 먹히므로 사용 X
+    identity_patterns = [
+        # 나이 표현 (다양한 형태)
+        (r'\d{1,3}세', "나이(N세)"),
+        (r'\d{1,3}년', "기간(N년)"),
+        (r'\d{1,3}살', "나이(N살)"),
+        # 한자어 나이
+        (r'마흔[일이삼사오육칠팔구]?', "한자나이(마흔X)"),
+        (r'서른[일이삼사오육칠팔구]?', "한자나이(서른X)"),
+        (r'쉰[일이삼사오육칠팔구]?', "한자나이(쉰X)"),
+        (r'스물[일이삼사오육칠팔구]?', "한자나이(스물X)"),
+    ]
+    
+    for pattern, label in identity_patterns:
+        matches = re.findall(pattern, text)
+        if not matches:
+            continue
+        # 같은 매칭들 카운트
+        match_counter = Counter(matches)
+        for matched_text, count in match_counter.items():
+            if count >= 5:  # 회차당 5회 이상이면 과다
+                # 본문 분량 대비 비율도 계산
+                ratio_per_1000 = (count / len(text)) * 1000
+                overused.append({
+                    "word": matched_text,
+                    "count": count,
+                    "ratio_percent": round(ratio_per_1000, 2),  # 1000자당
+                    "type": f"★ 정체성 키워드 ({label})",
+                    "warning": "캐릭터 정체성 키워드는 회차당 5회 이하 권장 (A15 규칙)",
+                })
+    
+    return overused[:8]  # 5 → 8개로 늘림 (정체성 키워드 추가 위해)
 
 
 # ══════════════════════════════════════════════
@@ -373,8 +410,13 @@ def generate_repetition_report(detection: dict) -> str:
     auto_targets = detection.get("auto_clean_targets", [])
     review_targets = detection.get("review_targets", [])
     stats = detection.get("stats", {})
+    word_overuse_check = stats.get("word_overuse", [])
+    has_identity_overuse = any(
+        w.get("type", "").startswith("★") for w in word_overuse_check
+    )
     
-    if not auto_targets and not review_targets:
+    # 자동/검토 대상 + 정체성 키워드 모두 없을 때만 "깨끗" 메시지
+    if not auto_targets and not review_targets and not has_identity_overuse:
         return "✅ 반복·중복 패턴 없음. 본문 깨끗합니다."
     
     lines = []
@@ -419,10 +461,25 @@ def generate_repetition_report(detection: dict) -> str:
     # 단어 과다 사용
     word_overuse = stats.get("word_overuse", [])
     if word_overuse:
-        lines.append(f"### 📊 과다 사용 단어 (참고)")
-        for w in word_overuse[:5]:
-            lines.append(f"- `{w['word']}`: {w['count']}회 ({w['ratio_percent']:.2f}%)")
-        lines.append("")
+        # 정체성 키워드는 우선 표시 (★)
+        identity_words = [w for w in word_overuse if w.get("type", "").startswith("★")]
+        normal_words = [w for w in word_overuse if not w.get("type", "").startswith("★")]
+        
+        if identity_words:
+            lines.append("### ⚠️ 정체성 키워드 과다 사용 (A15 규칙 위반)")
+            lines.append("캐릭터 식별자(나이·정체성)는 회차당 5회 이하 권장. "
+                         "다양한 표현으로 우회하세요.")
+            lines.append("")
+            for w in identity_words:
+                lines.append(f"- 🚨 `{w['word']}`: **{w['count']}회** "
+                             f"({w.get('type', '')})")
+            lines.append("")
+        
+        if normal_words:
+            lines.append(f"### 📊 과다 사용 단어 (참고)")
+            for w in normal_words[:5]:
+                lines.append(f"- `{w['word']}`: {w['count']}회 ({w.get('ratio_percent', 0):.2f}%)")
+            lines.append("")
     
     # 요약
     estimated_chars = stats.get("estimated_chars_to_remove", 0)
