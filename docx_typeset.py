@@ -116,6 +116,134 @@ def _is_dialogue_line(line: str) -> bool:
     return bool(line) and line.lstrip().startswith(("'", '"', '"', '"', "'", '「', '『'))
 
 
+def build_safe_season_docx(
+    episodes: dict,
+    concept: dict,
+    rating: str = "19",
+    platform: str = "카카오페이지",
+) -> bytes:
+    """[v3.0+ 안전 빌더] session_state의 회차 본문을 그대로 사용한 통합본.
+    
+    기존 build_season_docx의 동기화 버그 회피용:
+    - 정수 키 정렬 보장 (문자열 정렬 X)
+    - 본문이 빈 회차는 경고만 + 건너뛰지 않음
+    - 인장(작품 제목 + IP 홀더)은 표지에만 표시 (본문 중복 제거)
+    - 회차별 페이지 분리
+    
+    동기화 버그가 의심되면 이 빌더를 우선 사용.
+    """
+    from docx.shared import RGBColor
+    from docx.enum.style import WD_STYLE_TYPE
+    
+    doc = Document()
+    
+    # A4 페이지 + 적정 여백
+    section = doc.sections[0]
+    section.left_margin = Pt(72)
+    section.right_margin = Pt(72)
+    section.top_margin = Pt(72)
+    section.bottom_margin = Pt(72)
+    
+    # ── 표지 ──
+    work_title = (concept or {}).get("title", "(제목 미지정)")
+    ip_holder = (concept or {}).get("ip_holder", "블루진픽처스")
+    
+    # 작품 제목 (큰 글씨)
+    cover_p = doc.add_paragraph()
+    cover_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    cover_run = cover_p.add_run(work_title)
+    cover_run.bold = True
+    cover_run.font.size = Pt(18)
+    _set_korean_font(cover_run, '맑은 고딕', Pt(18))
+    
+    # 부제 (회차 수 + 등급)
+    sub_p = doc.add_paragraph()
+    sub_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sub_run = sub_p.add_run(f"시즌 1 {len(episodes)}화 통합본 ({rating}금)")
+    sub_run.font.size = Pt(11)
+    _set_korean_font(sub_run, '맑은 고딕', Pt(11))
+    
+    # IP 홀더
+    holder_p = doc.add_paragraph()
+    holder_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    holder_run = holder_p.add_run(ip_holder)
+    holder_run.font.size = Pt(10)
+    holder_run.italic = True
+    holder_run.font.color.rgb = RGBColor(0x66, 0x66, 0x66)
+    _set_korean_font(holder_run, '맑은 고딕', Pt(10))
+    
+    doc.add_page_break()
+    
+    # ── 회차별 본문 ──
+    # ★ 정수 정렬 보장 (문자열 정렬 시 EP10이 EP2 앞에 오는 사고 방지)
+    ep_keys_int = []
+    for k in episodes.keys():
+        try:
+            ep_keys_int.append(int(k))
+        except (ValueError, TypeError):
+            continue
+    ep_keys_int.sort()
+    
+    for ep_num in ep_keys_int:
+        text = episodes.get(str(ep_num), "")
+        if not text or not text.strip():
+            # 빈 회차 — 경고만 표시
+            warn_p = doc.add_paragraph()
+            warn_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            warn_run = warn_p.add_run(f"⚠️ EP{ep_num} 본문 없음")
+            warn_run.font.size = Pt(11)
+            warn_run.italic = True
+            warn_run.font.color.rgb = RGBColor(0xCC, 0x00, 0x00)
+            _set_korean_font(warn_run, '맑은 고딕', Pt(11))
+            doc.add_page_break()
+            continue
+        
+        lines = text.split('\n')
+        
+        # 작품 인장 제거 (이미 표지에 있으니 본문 중복 제거)
+        # 첫 줄이 작품 제목이면 그 이후로 시작
+        idx = 0
+        if lines and lines[0].strip() == work_title:
+            idx = 1
+            # IP 홀더도 건너뛰기
+            while idx < len(lines) and not lines[idx].strip().startswith("EP"):
+                idx += 1
+        
+        if idx >= len(lines):
+            # 인장만 있고 본문 없음
+            doc.add_page_break()
+            continue
+        
+        # 회차 제목 (가운데, 크게)
+        title_line = lines[idx].strip()
+        title_p = doc.add_paragraph()
+        title_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        title_run = title_p.add_run(title_line)
+        title_run.bold = True
+        title_run.font.size = Pt(13)
+        _set_korean_font(title_run, '맑은 고딕', Pt(13))
+        
+        doc.add_paragraph()  # 빈 줄
+        
+        # 본문
+        body_lines = [l for l in lines[idx+1:] if l.strip()]
+        for line in body_lines:
+            p = doc.add_paragraph()
+            p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+            run = p.add_run(line)
+            run.font.size = Pt(11)
+            _set_korean_font(run, '맑은 고딕', Pt(11))
+            pf = p.paragraph_format
+            pf.line_spacing = 1.5
+            pf.space_after = Pt(6)
+        
+        # 마지막 회차가 아니면 페이지 분리
+        if ep_num != ep_keys_int[-1]:
+            doc.add_page_break()
+    
+    return _save_to_bytes(doc)
+
+
 def build_styled_episode_docx(text: str, ep_label: str = "") -> bytes:
     """[v3.0+] 일반 양식 docx — 작품 인장 + 워드 스타일 적용.
     

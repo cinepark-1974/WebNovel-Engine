@@ -3660,8 +3660,36 @@ with main_tabs[2]:
                 with col_dl2:
                     st.markdown("**📚 시즌 전체 DOCX**")
                     st.caption("회차 통합 · 커버+목차+본문")
+                    
+                    # ★ v3.0+ 회차별 분량 검증 — 통합본 생성 전 사전 점검
+                    short_eps_19 = [
+                        ep for ep in eps_19 
+                        if isinstance(eps_19[ep], str) and len(eps_19[ep]) < 4000
+                    ]
+                    short_eps_15 = [
+                        ep for ep in eps_15
+                        if isinstance(eps_15[ep], str) and len(eps_15[ep]) < 4000
+                    ]
+                    
+                    if short_eps_19 or short_eps_15:
+                        st.warning(
+                            f"⚠️ **분량 미달 회차 감지** — 통합본 생성 전 검토 권장\n\n"
+                            + (f"- 19금: EP{short_eps_19}\n" if short_eps_19 else "")
+                            + (f"- 15금: EP{short_eps_15}\n" if short_eps_15 else "")
+                            + "\n4,000자 미만은 정상 회차의 절반 이하입니다. "
+                            "STEP 3-1로 돌아가 재집필하세요."
+                        )
+                    
                     if eps_19:
-                        season_19_bytes = build_season_docx(eps_19, concept, "19", platform)
+                        try:
+                            from docx_typeset import build_safe_season_docx
+                            season_19_bytes = build_safe_season_docx(
+                                eps_19, concept, "19", platform,
+                            )
+                        except Exception as e:
+                            # 폴백: 기존 빌더
+                            st.caption(f"⚠️ 안전 빌더 실패, 기본 빌더 사용: {e}")
+                            season_19_bytes = build_season_docx(eps_19, concept, "19", platform)
                         st.download_button(
                             f"⬇️ 19금 시즌 전체 ({len(eps_19)}화) DOCX",
                             data=season_19_bytes,
@@ -3671,7 +3699,14 @@ with main_tabs[2]:
                             use_container_width=True,
                         )
                     if eps_15:
-                        season_15_bytes = build_season_docx(eps_15, concept, "15", platform)
+                        try:
+                            from docx_typeset import build_safe_season_docx
+                            season_15_bytes = build_safe_season_docx(
+                                eps_15, concept, "15", platform,
+                            )
+                        except Exception as e:
+                            st.caption(f"⚠️ 안전 빌더 실패, 기본 빌더 사용: {e}")
+                            season_15_bytes = build_season_docx(eps_15, concept, "15", platform)
                         st.download_button(
                             f"⬇️ 15금 시즌 전체 ({len(eps_15)}화) DOCX",
                             data=season_15_bytes,
