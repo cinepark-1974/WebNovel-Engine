@@ -202,6 +202,80 @@ def analyze_season(episodes_19, episodes_15, character_bible=None, plant_map=Non
     score_dup = max(0, 100 - len(dup_pairs) * 5)
     score_overall = (score_length + score_identity + score_dup) // 3
     
+    # ───── 8. 일괄 독서 시뮬레이션 (5화·10화 연속 읽기 체감) ─────
+    # 네이버 시리즈/카카오페이지 일괄 공개 시 독자는 5~10화를 연달아 읽음
+    # 그 구간에서 반복·피로 패턴이 있는지 검증
+    binge_5_warnings = []  # 5화 연속 구간에서 47 키워드 중복 감지
+    binge_10_warnings = []
+    
+    # 5화 슬라이딩 윈도우
+    for start_ep in range(1, n_eps - 4):
+        window_eps = list(range(start_ep, start_ep + 5))
+        # 이 5화 구간에 정체성 키워드가 얼마나 등장하는지
+        total_in_window = 0
+        same_words = Counter()
+        for ep_num in window_eps:
+            k = str(ep_num)
+            if k not in episodes_19:
+                continue
+            kw = _detect_identity_keywords(episodes_19[k])
+            if kw:
+                top_word, top_count = kw.most_common(1)[0]
+                total_in_window += top_count
+                same_words[top_word] += top_count
+        
+        # 5화 구간에 동일 키워드가 25회 이상이면 경고 (회당 5회 평균)
+        if total_in_window >= 25 and same_words:
+            top_word, top_count = same_words.most_common(1)[0]
+            binge_5_warnings.append({
+                "start_ep": start_ep,
+                "end_ep": start_ep + 4,
+                "word": top_word,
+                "count": top_count,
+            })
+    
+    # 10화 슬라이딩 윈도우 (캐릭터 등장 균형)
+    char_balance_warnings = []
+    if char_stats:
+        # 주요 인물 (출현 비율 50% 이상)을 기준으로 10화 구간 검사
+        major_chars = [c for c in char_stats if c['ratio'] >= 0.5]
+        for start_ep in range(1, n_eps - 9):
+            window_eps = list(range(start_ep, start_ep + 10))
+            for char in major_chars:
+                # 이 10화 구간에서 0번 등장한 주요 인물이 있는가?
+                appeared = False
+                for ep_num in window_eps:
+                    k = str(ep_num)
+                    if k in episodes_19 and char['name'] in episodes_19[k]:
+                        appeared = True
+                        break
+                if not appeared and char['name']:
+                    char_balance_warnings.append({
+                        "start_ep": start_ep,
+                        "end_ep": start_ep + 9,
+                        "missing_char": char['name'],
+                    })
+    
+    # 중복 제거 (같은 인물이 여러 윈도우에서 누락되어도 기록은 한 번만)
+    seen_chars = set()
+    char_balance_unique = []
+    for w in char_balance_warnings:
+        key = w['missing_char']
+        if key not in seen_chars:
+            char_balance_unique.append(w)
+            seen_chars.add(key)
+    
+    # 점수 보정 — 일괄 독서 시뮬레이션 점수
+    score_binge = 100
+    if binge_5_warnings:
+        score_binge -= min(50, len(binge_5_warnings) * 3)
+    if char_balance_unique:
+        score_binge -= min(30, len(char_balance_unique) * 10)
+    score_binge = max(0, score_binge)
+    
+    # 종합 점수에 binge 반영
+    score_overall = (score_length + score_identity + score_dup + score_binge) // 4
+    
     return {
         "n_eps": n_eps,
         "length": {
@@ -227,10 +301,15 @@ def analyze_season(episodes_19, episodes_15, character_bible=None, plant_map=Non
         },
         "high_sim_pairs": high_sim_pairs,
         "dup_pairs": dup_pairs,
+        "binge": {
+            "five_chapter_warnings": binge_5_warnings,
+            "char_balance_warnings": char_balance_unique,
+        },
         "scores": {
             "length": score_length,
             "identity": score_identity,
             "duplication": score_dup,
+            "binge": score_binge,
             "overall": score_overall,
         },
     }
@@ -302,11 +381,20 @@ def build_season_report_docx(analysis, work_title, ip_holder="블루진픽처스
     
     sub_p = doc.add_paragraph()
     sub_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    sub_run = sub_p.add_run(f"시즌 1 {analysis['n_eps']}화 — 종합 검증 보고서")
+    sub_run = sub_p.add_run(f"시즌 1 {analysis['n_eps']}화 — 일괄 퍼블리싱 검증 보고서")
     sub_run.bold = True
     sub_run.font.size = Pt(13)
     sub_run.font.color.rgb = RGBColor(0x19, 0x19, 0x70)
     _set_korean_font(sub_run, '맑은 고딕', Pt(13))
+    
+    # 사용 컨텍스트 부제
+    ctx_p = doc.add_paragraph()
+    ctx_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    ctx_run = ctx_p.add_run("(네이버 시리즈·카카오페이지 등 일괄 공개 플랫폼 입점 점검용)")
+    ctx_run.font.size = Pt(9.5)
+    ctx_run.italic = True
+    ctx_run.font.color.rgb = RGBColor(0x88, 0x88, 0x88)
+    _set_korean_font(ctx_run, '맑은 고딕', Pt(9.5))
     
     date_p = doc.add_paragraph()
     date_p.alignment = WD_ALIGN_PARAGRAPH.CENTER
@@ -323,23 +411,25 @@ def build_season_report_docx(analysis, work_title, ip_holder="블루진픽처스
     
     s = analysis['scores']
     
-    # 동적 평가 코멘트
+    # 동적 평가 코멘트 (일괄 퍼블리싱 관점)
     overall = s['overall']
     if overall >= 90:
-        eval_comment = "매우 우수한 완성도. 출판 준비 완료 상태."
+        eval_comment = "매우 우수 — 일괄 퍼블리싱 즉시 가능."
     elif overall >= 75:
-        eval_comment = "우수한 완성도. 작은 보정으로 출판 가능."
+        eval_comment = "우수 — 작은 보정 후 일괄 퍼블리싱 권장."
     elif overall >= 60:
-        eval_comment = "양호한 완성도. 일부 항목 보정 권장."
+        eval_comment = "양호 — 권장 후속 작업 적용 후 일괄 공개 검토."
     else:
-        eval_comment = "추가 보정 필요. 권장 후속 작업 참조."
+        eval_comment = "추가 보정 필요 — 일괄 공개 전 우선순위 항목 처리 권장."
     
-    para(f"시즌 1 {analysis['n_eps']}화 검증 완료. {eval_comment}", size=10.5)
+    para(f"독자가 5~10화를 연달아 읽는 일괄 공개 환경(네이버 시리즈·카카오페이지 등)에서 "
+         f"체감되는 반복·균형·피로 패턴을 진단함. {eval_comment}", size=10.5)
     para("")
     
     kv("■ 분량 일관성", f"{s['length']} / 100")
     kv("■ 정체성 키워드 절제", f"{s['identity']} / 100")
     kv("■ 클리프행어 다양성", f"{s['duplication']} / 100")
+    kv("■ 일괄 독서 체감", f"{s.get('binge', 100)} / 100  ★ 5~10화 연속 읽기 시뮬레이션")
     kv("■ 종합 점수", f"{s['overall']} / 100")
     
     doc.add_paragraph()
@@ -464,8 +554,54 @@ def build_season_report_docx(analysis, work_title, ip_holder="블루진픽처스
     
     doc.add_paragraph()
     
-    # ═══ 6. 권장 후속 작업 ═══
-    heading("6. 권장 후속 작업", 1)
+    # ═══ 6. 일괄 독서 시뮬레이션 ★ 일괄 퍼블리싱 핵심 ═══
+    heading("6. 일괄 독서 시뮬레이션 (5~10화 연속 읽기)", 1)
+    
+    binge = analysis.get('binge', {})
+    binge5 = binge.get('five_chapter_warnings', [])
+    char_balance = binge.get('char_balance_warnings', [])
+    
+    para("일괄 공개 플랫폼에서는 독자가 5~10화를 한 자리에서 연달아 읽음. "
+         "회당 검수에서는 자연스러운 패턴이라도 연속 읽기 시 피로·반복으로 체감될 수 있음.",
+         size=10)
+    para("")
+    
+    kv("5화 연속 정체성 키워드 과다 구간", f"{len(binge5)}개")
+    kv("10화 연속 주요 인물 부재 구간", f"{len(char_balance)}개")
+    
+    if binge5:
+        para("")
+        para("■ 5화 연속 읽기 시 키워드 피로 구간 (Top 5):", bold=True, size=10.5)
+        for w in binge5[:5]:
+            para(f"  EP{w['start_ep']}~EP{w['end_ep']}: '{w['word']}' "
+                 f"5화 합계 {w['count']}회 (회당 평균 {w['count']//5}회)", 
+                 size=10, indent=True)
+        para("")
+        para("→ 5화 합계 25회 이상은 독자가 '같은 표현 반복'으로 체감하는 임계값. "
+             "보정 도구로 이 구간을 우선 처리 권장.",
+             size=10)
+    
+    if char_balance:
+        para("")
+        para("■ 10화 연속 주요 인물 미등장 구간:", bold=True, size=10.5)
+        for w in char_balance[:5]:
+            para(f"  EP{w['start_ep']}~EP{w['end_ep']}에서 '{w['missing_char']}' 등장 0회", 
+                 size=10, indent=True)
+        para("")
+        para("→ 주요 인물이 10화 동안 사라지면 독자가 '서브 캐릭터 잊혔다'고 느낌. "
+             "특히 일괄 공개에서는 더 두드러지므로 후속 시즌 또는 외전에서 보강 권장.",
+             size=10)
+    
+    if not binge5 and not char_balance:
+        para("")
+        para("■ 평가", bold=True, size=10.5)
+        para("연속 읽기 시 피로·부재 구간 발견되지 않음. 일괄 공개 적합.",
+             size=10)
+    
+    doc.add_paragraph()
+    
+    # ═══ 7. 권장 후속 작업 ═══
+    heading("7. 권장 후속 작업", 1)
     
     actions = []
     

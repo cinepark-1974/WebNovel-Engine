@@ -3821,7 +3821,7 @@ with main_tabs[2]:
 
                 # ── ★ v3.0+ 시즌 종합 검증 보고서 ─────────────────
                 st.divider()
-                sub_header("🎯 시즌 종합 검증 보고서")
+                sub_header("🎯 시즌 종합 검증 — 일괄 퍼블리싱 점검")
                 
                 n_eps_19 = len([k for k, v in eps_19.items() if v])
                 n_eps_15 = len([k for k, v in eps_15.items() if v])
@@ -3833,9 +3833,9 @@ with main_tabs[2]:
                     )
                 else:
                     st.caption(
-                        f"전체 {n_eps_19}화 일괄 검증 — "
-                        "분량·캐릭터·정체성 키워드·떡밥·클리프행어 7가지 항목 진단 후 "
-                        "약 4-5쪽 보고서로 출력. 출판사 제출 시 부가 자료로도 활용 가능."
+                        f"네이버 시리즈·카카오페이지 등 **일괄 공개 플랫폼 입점 전 점검** 도구. "
+                        f"독자가 5~10화를 연달아 읽을 때 체감될 반복·균형·피로 패턴을 진단해 "
+                        f"약 4-5쪽 보고서로 출력. 출판사·플랫폼 미팅 시 부가 자료로도 활용 가능."
                     )
                     
                     col_rpt1, col_rpt2 = st.columns([1, 2])
@@ -3846,7 +3846,7 @@ with main_tabs[2]:
                             key="run_season_report",
                             use_container_width=True,
                         ):
-                            with st.spinner("50화 분석 중..."):
+                            with st.spinner(f"{n_eps_19}화 분석 중..."):
                                 try:
                                     from season_report import analyze_season, build_season_report_docx
                                     
@@ -3883,11 +3883,12 @@ with main_tabs[2]:
                             analysis = st.session_state.get("_season_report_analysis", {})
                             scores = analysis.get("scores", {})
                             
-                            # 점수 4개 한 줄에 표시
+                            # 점수 5개 한 줄에 표시
                             st.markdown(
                                 f"분량 **{scores.get('length', 0)}** · "
                                 f"정체성 **{scores.get('identity', 0)}** · "
                                 f"클리프 **{scores.get('duplication', 0)}** · "
+                                f"일괄독서 **{scores.get('binge', 0)}** · "
                                 f"종합 **{scores.get('overall', 0)}**"
                             )
                             
