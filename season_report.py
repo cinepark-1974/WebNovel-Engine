@@ -78,16 +78,37 @@ def _detect_identity_keywords(text):
 
 
 def analyze_season(episodes_19, episodes_15, character_bible=None, plant_map=None):
-    """50화 일괄 분석 → 분석 결과 dict 반환"""
+    """50화 일괄 분석 → 분석 결과 dict 반환.
+    
+    ★ v3.0+ 버그 수정: 회차 키가 정수든 문자열이든 모두 안전하게 처리.
+    session_state.episodes_19는 정수 키, JSON에서 불러올 땐 문자열 키.
+    """
     if not episodes_19:
         return None
     
+    # ★ 키를 정수로 통일 — 정수든 문자열이든 안전 처리
+    def _normalize_keys(d):
+        """dict의 키를 정수로 통일"""
+        if not d:
+            return {}
+        result = {}
+        for k, v in d.items():
+            try:
+                int_k = int(k) if not isinstance(k, int) else k
+                result[int_k] = v
+            except (ValueError, TypeError):
+                continue
+        return result
+    
+    eps_19 = _normalize_keys(episodes_19)
+    eps_15 = _normalize_keys(episodes_15) if episodes_15 else {}
+    
     # ───── 1. 분량 분포 ─────
-    lens_19 = [(int(k), len(v)) for k, v in episodes_19.items() if isinstance(v, str)]
+    lens_19 = [(k, len(v)) for k, v in eps_19.items() if isinstance(v, str)]
     lens_19.sort()
     
     total_19 = sum(l for _, l in lens_19)
-    total_15 = sum(len(v) for v in episodes_15.values() if isinstance(v, str)) if episodes_15 else 0
+    total_15 = sum(len(v) for v in eps_15.values() if isinstance(v, str))
     n_eps = len(lens_19)
     avg_19 = total_19 // n_eps if n_eps > 0 else 0
     avg_15 = total_15 // n_eps if n_eps > 0 else 0
@@ -102,30 +123,52 @@ def analyze_season(episodes_19, episodes_15, character_bible=None, plant_map=Non
     # ───── 2. 캐릭터 등장 분포 ─────
     characters = {}
     if character_bible:
+        # ★ v3.0+ 이름 파싱 보강: "한시호 (유빈의 몸)" 같은 형태에서 본명·별칭 모두 추출
+        def _extract_names(full_name):
+            """이름 문자열에서 검색 가능한 키워드 리스트 추출"""
+            if not full_name:
+                return []
+            import re
+            keywords = []
+            # 괄호 제거한 본명
+            base = re.sub(r'[\(\[].*?[\)\]]', '', full_name).strip()
+            if base:
+                keywords.append(base)
+            # 괄호 안의 별칭들
+            inside = re.findall(r'[\(\[]([^\)\]]+)[\)\]]', full_name)
+            for chunk in inside:
+                # "유빈의 몸" → "유빈"만 추출 (마지막 단어 추출하지 말고 명사만)
+                # 한국어 이름은 보통 2~3자
+                names_in = re.findall(r'[가-힣]{2,4}(?=의|$|\s|,)', chunk)
+                for n in names_in:
+                    if n not in keywords and len(n) >= 2:
+                        keywords.append(n)
+            return keywords or [full_name]
+        
         # 바이블에서 자동 추출
         protag = character_bible.get('protagonist', {})
         if protag.get('name'):
-            characters[protag['name']] = [protag['name']]
+            characters[protag['name']] = _extract_names(protag['name'])
         for li in character_bible.get('love_interests', []):
             if li.get('name'):
-                characters[li['name']] = [li['name']]
+                characters[li['name']] = _extract_names(li['name'])
         villain = character_bible.get('villain', {})
         if villain.get('name'):
-            characters[villain['name']] = [villain['name']]
+            characters[villain['name']] = _extract_names(villain['name'])
         for sup in character_bible.get('supporting', [])[:5]:
             if sup.get('name'):
-                characters[sup['name']] = [sup['name']]
+                characters[sup['name']] = _extract_names(sup['name'])
     
     char_stats = []
     for name, keys in characters.items():
-        total_count = sum(sum(v.count(k) for k in keys) for v in episodes_19.values())
+        total_count = sum(sum(v.count(k) for k in keys) for v in eps_19.values())
         appeared_eps = []
         peak_ep, peak_count = 0, 0
         for ep_num in range(1, n_eps + 1):
-            k = str(ep_num)
-            if k not in episodes_19:
+            k = ep_num
+            if k not in eps_19:
                 continue
-            ep_count = sum(episodes_19[k].count(key) for key in keys)
+            ep_count = sum(eps_19[k].count(key) for key in keys)
             if ep_count > 0:
                 appeared_eps.append(ep_num)
             if ep_count > peak_count:
@@ -148,10 +191,10 @@ def analyze_season(episodes_19, episodes_15, character_bible=None, plant_map=Non
     total_identity_count = 0
     
     for ep_num in range(1, n_eps + 1):
-        k = str(ep_num)
-        if k not in episodes_19:
+        k = ep_num
+        if k not in eps_19:
             continue
-        text = episodes_19[k]
+        text = eps_19[k]
         kw_counter = _detect_identity_keywords(text)
         # 가장 많이 등장한 키워드만 봄
         if kw_counter:
@@ -177,16 +220,16 @@ def analyze_season(episodes_19, episodes_15, character_bible=None, plant_map=Non
     # ───── 5. 인접 회차 유사도 ─────
     high_sim_pairs = []
     for ep in range(1, n_eps):
-        if str(ep) not in episodes_19 or str(ep+1) not in episodes_19:
+        if ep not in eps_19 or str(ep+1) not in eps_19:
             continue
-        end_a = episodes_19[str(ep)][-400:]
-        start_b = episodes_19[str(ep+1)][:400]
+        end_a = eps_19[ep][-400:]
+        start_b = eps_19[ep+1][:400]
         sim = _jaccard(end_a, start_b)
         if sim > 0.10:
             high_sim_pairs.append((ep, ep+1, sim))
     
     # ───── 6. 회차 간 클리프행어 중복 ─────
-    endings = {ep: episodes_19[str(ep)][-300:] for ep in range(1, n_eps + 1) if str(ep) in episodes_19}
+    endings = {ep: eps_19[ep][-300:] for ep in range(1, n_eps + 1) if ep in eps_19}
     dup_pairs = []
     for ep_a in range(1, n_eps + 1):
         for ep_b in range(ep_a + 1, n_eps + 1):
@@ -215,10 +258,10 @@ def analyze_season(episodes_19, episodes_15, character_bible=None, plant_map=Non
         total_in_window = 0
         same_words = Counter()
         for ep_num in window_eps:
-            k = str(ep_num)
-            if k not in episodes_19:
+            k = ep_num
+            if k not in eps_19:
                 continue
-            kw = _detect_identity_keywords(episodes_19[k])
+            kw = _detect_identity_keywords(eps_19[k])
             if kw:
                 top_word, top_count = kw.most_common(1)[0]
                 total_in_window += top_count
@@ -245,8 +288,8 @@ def analyze_season(episodes_19, episodes_15, character_bible=None, plant_map=Non
                 # 이 10화 구간에서 0번 등장한 주요 인물이 있는가?
                 appeared = False
                 for ep_num in window_eps:
-                    k = str(ep_num)
-                    if k in episodes_19 and char['name'] in episodes_19[k]:
+                    k = ep_num
+                    if k in eps_19 and char['name'] in eps_19[k]:
                         appeared = True
                         break
                 if not appeared and char['name']:
