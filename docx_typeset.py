@@ -43,6 +43,11 @@ docx_typeset.py — 웹소설 조판 양식 출력 모듈
 - v3.1.3: 대사 단락 호흡 강화 — 가독성 개선
         대사 스타일의 위아래 여백 6pt → 18pt 확대 (씬구분과 동일)
         큰따옴표·작은따옴표 모두 위아래 한 줄 띄움 효과로 시각적 분리
+- v3.1.4: 메타 블록 제거 알고리즘 강화 — 본문 인용이 끼어든 케이스 대응
+        기존: 뒤에서 메타 라벨 연속만 검사 → 메타 사이 본문 인용에서 멈춤
+        강화: 회차 뒤쪽 30% 영역에서 메타 라벨 위치들을 모두 수집해
+              가장 앞 메타 라벨부터 끝까지 일괄 제거
+        EP10 같은 케이스(클리프행어 내용에 본문 인용 끼어 있음) 정확 처리
 """
 
 from io import BytesIO
@@ -306,15 +311,19 @@ def _is_meta_label_line(line: str) -> bool:
 def _strip_trailing_meta_block(text: str) -> str:
     """회차 본문 끝의 메타정보 블록을 제거합니다.
     
-    동작:
-    - 본문 끝에서 거꾸로 올라가며 메타 라벨 줄을 찾음
-    - 메타 라벨 줄과 그 사이의 빈 줄을 함께 제거
-    - 메타 라벨이 아닌 본문 줄을 만나는 순간 멈춤
+    동작 (v3.1.4 강화):
+    1. 회차 뒤쪽 30% 영역에서 메타 라벨 줄이 있는지 검사 (메타 블록 존재 확신)
+    2. 메타 라벨이 발견되면, 거기서부터 위로 거슬러 올라가며 
+       "메타 라벨 또는 빈 줄 또는 본문 인용으로 의심되는 짧은 줄"이 이어지는 한 포함
+    3. 메타 블록의 진짜 시작점을 찾으면, 그 위치부터 회차 끝까지 모두 제거
+    
+    이 방식은 EP10 같은 케이스(클리프행어 내용에 본문 인용이 끼어 있는 경우)에도
+    메타 블록 전체를 정확히 제거하고, 메타 블록의 진짜 시작점이 tail 영역 밖에 있어도 대응합니다.
     
     안전 장치:
-    - 본문 중간에 우연히 메타 라벨처럼 보이는 문장이 있어도 영향 없음 (끝에서만 검사)
-    - 메타 블록이 없으면 원본 그대로 반환
-    - 회차의 80% 이상을 잘라내는 경우 (오인식 의심) 원본 그대로 반환
+    - tail 영역(뒤쪽 30%)에서 메타 라벨 줄이 발견되지 않으면 작동 안 함
+      (본문 중간에 우연히 메타 라벨이 등장하는 경우 보호)
+    - 메타 블록이 본문 80%를 차지하면 오인식으로 판단해 원본 반환
     
     Returns:
         메타 블록이 제거된 본문 텍스트
@@ -323,43 +332,72 @@ def _strip_trailing_meta_block(text: str) -> str:
         return text
     
     lines = text.split('\n')
-    original_len = len(lines)
+    total_lines = len(lines)
+    if total_lines < 3:
+        return text
     
-    # 뒤에서부터 검사 — 메타 라벨 줄 + 사이의 빈 줄을 모두 잘라냄
-    cut_index = len(lines)  # 이 인덱스 이후를 잘라낸다는 의미
-    found_meta = False
+    # 1단계: 회차 뒤쪽 영역에서 메타 라벨 존재 확인
+    # 짧은 회차도 대응 — 마지막 30% 또는 최소 마지막 5줄
+    tail_check_start = max(0, total_lines - max(5, int(total_lines * 0.3)))
     
-    i = len(lines) - 1
+    has_meta_in_tail = any(
+        _is_meta_label_line(lines[i]) 
+        for i in range(tail_check_start, total_lines)
+    )
+    if not has_meta_in_tail:
+        return text
+    
+    # 2단계: 위로 거슬러 올라가며 진짜 시작점 찾기
+    # 뒤에서부터 차례로 검사하며 "메타 영역의 시작"을 찾음
+    # 메타 라벨 + 빈 줄 + 메타 블록 내부에 끼어든 본문 인용을 모두 포함
+    cut_index = total_lines  # 초기값: 끝
+    meta_label_seen = False  # 메타 라벨을 한 번이라도 봤는지
+    
+    i = total_lines - 1
     while i >= 0:
         line = lines[i]
         stripped = line.strip()
         
-        if not stripped:
-            # 빈 줄 — 일단 건너뜀 (메타 블록 사이의 공백일 수 있음)
-            i -= 1
-            continue
-        
         if _is_meta_label_line(line):
-            # 메타 라벨 줄 — 잘라낼 후보
+            # 메타 라벨 줄 — cut 위치 갱신, 계속 위로
             cut_index = i
-            found_meta = True
+            meta_label_seen = True
             i -= 1
             continue
         
-        # 메타가 아닌 본문 줄 — 여기서 멈춤
-        break
+        if not stripped:
+            # 빈 줄 — 메타 영역 안의 빈 줄일 수 있음. 계속 위로
+            i -= 1
+            continue
+        
+        if not meta_label_seen:
+            # 아직 메타 라벨을 한 번도 못 봤는데 본문 줄 만남 → 멈춤
+            break
+        
+        # 메타 라벨을 본 적이 있는 상태에서 본문 같은 줄을 만났을 때:
+        # 이게 메타 블록 안에 끼어든 인용 줄인지, 아니면 진짜 본문인지 판단해야 함.
+        # 판단 기준: 이 줄 위쪽 3줄 안에 메타 라벨이 또 있으면 인용으로 간주
+        upper_has_meta = False
+        for j in range(max(0, i - 3), i):
+            if _is_meta_label_line(lines[j]):
+                upper_has_meta = True
+                break
+        
+        if upper_has_meta:
+            # 위쪽에 메타 라벨이 또 있음 → 이 줄은 메타 블록 내부 인용 → 포함하고 계속
+            cut_index = i
+            i -= 1
+            continue
+        else:
+            # 위쪽에 메타 라벨 없음 → 진짜 본문 → 멈춤
+            break
     
-    if not found_meta:
-        # 메타 블록 없음 → 원본 반환
-        return text
-    
-    # 안전 장치: 80% 이상 잘라내면 오인식 가능성 — 원본 반환
-    if cut_index < original_len * 0.2:
+    # 안전 장치: 80% 이상 잘라내면 오인식 가능성 → 원본 반환
+    if cut_index < total_lines * 0.2:
         return text
     
     # cut_index 직전까지 살리되, 끝부분 빈 줄 정리
     result_lines = lines[:cut_index]
-    # 끝의 빈 줄 trim
     while result_lines and not result_lines[-1].strip():
         result_lines.pop()
     
@@ -957,6 +995,31 @@ def _self_test():
     # 메타 블록 없는 본문은 그대로
     pure_text = "본문 마지막 문장.\n그 다음 마지막 문장."
     assert _strip_trailing_meta_block(pure_text) == pure_text, "메타 없는 본문이 변형됨"
+    
+    # ★ [v3.1.4] 메타 사이에 본문 인용이 끼어든 케이스 (EP10 같은 상황)
+    text_with_quoted = """본문 첫 줄.
+본문 두 번째 줄.
+본문 세 번째 줄.
+본문 네 번째 줄.
+본문 다섯 번째 줄.
+본문 여섯 번째 줄.
+본문 일곱 번째 줄.
+본문 여덟 번째 줄.
+본문 아홉 번째 줄.
+본문 열 번째 줄.
+첫 문장: 메타 시작.
+리캡 방식: 행동
+독자 질문: 누구인가?
+클리프행어 유형: Threat
+클리프행어 내용: 그가 돌아섰다.
+"저 사람, 알던 사람이야?"
+웃고 있었다. 눈은 웃지 않으면서.
+다음 회차 연결: EP다음."""
+    cleaned2 = _strip_trailing_meta_block(text_with_quoted)
+    assert "첫 문장:" not in cleaned2, "v3.1.4: 메타 시작점 제거 실패"
+    assert "저 사람" not in cleaned2, "v3.1.4: 메타 사이 본문 인용도 제거되어야 함"
+    assert "다음 회차 연결:" not in cleaned2, "v3.1.4: 메타 끝 제거 실패"
+    assert "본문 열 번째 줄." in cleaned2, "v3.1.4: 진짜 본문 마지막 줄이 잘려나감"
     
     # ★ [v3.1] 메타정보 클리닝 검증
     from io import BytesIO
