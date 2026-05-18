@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v3.1 — prompt.py
+👖 BLUE JEANS WEB NOVEL ENGINE v3.2 — prompt.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 v2.6.4: Context-Aware Description (첫 등장 풀 / 재등장 압축 / 씬 타입 차등)
@@ -10,6 +10,11 @@ v3.1:   출력 위생 강화 (메타정보 블록 출력 금지 + 마크다운 e
           클리프행어 내용:/다음 회차 연결:' 메타정보 노출 금지 명시
         - 마크다운 escape(\\*, \\<, \\>) 출력 금지 명시
         - build_episode_write_prompt + build_rating_convert_prompt에 반영
+v3.2:   STEP 3-5 대사 환원 제안 빌더 추가
+        - build_dialogue_conversion_suggest_prompt() 추가
+        - 회차 본문에서 대사로 환원 가능한 단락 N개를 LLM이 자동 탐지
+        - 본문 직접 수정 X — 작가가 선택할 수 있는 대안만 제시
+        - 시그니처 대사·도입부·클리프행어 보호 가드 내장
 © 2026 BLUE JEANS PICTURES
 """
 
@@ -1499,6 +1504,88 @@ def build_reader_simulation_prompt(episode_text, persona, genre=""):
   "flow_score": 1~10,
   "honest_verdict": "한 줄 평 (독자 말투로)"
 }}""".strip()
+
+
+def build_dialogue_conversion_suggest_prompt(
+    episode_text: str,
+    episode_number: int = 0,
+    characters: str = "",
+    genre: str = "",
+    suggest_count: int = 10,
+):
+    """[v3.2 신규] 대사 환원 제안 빌더.
+    
+    회차 본문 안에서 "지문으로 풀려 있지만 대사로 바꾸면 더 살아날 단락"을
+    LLM이 자동으로 찾아 N개의 대안을 제시합니다.
+    
+    원칙:
+    - 본문을 직접 수정하지 않습니다. 작가가 선택할 수 있도록 대안만 제시.
+    - 캐릭터 시그니처 대사·작품 톤을 해치지 않는 단락만 후보로 삼습니다.
+    - 내적 독백·정체성 흐름·작품의 핵심 묘사는 건드리지 않습니다.
+    - 외부 행동·반응·관찰성 지문 중 대사로 풀어도 손실이 없는 것만 선택.
+    
+    Args:
+        episode_text: 회차 본문 (제목 포함)
+        episode_number: 회차 번호 (출력 라벨용)
+        characters: 캐릭터 바이블 텍스트 블록 (말투·관계 참고용)
+        genre: 장르 (말투 톤 결정용)
+        suggest_count: 제안 개수 (기본 10개)
+    
+    Returns:
+        프롬프트 문자열. LLM은 JSON으로 응답.
+    """
+    char_block = f"\n[캐릭터 바이블]\n{characters}\n" if characters else ""
+    genre_block = f"\n[장르] {genre}" if genre else ""
+    
+    return f"""당신은 한국 웹소설 편집자입니다. 작가가 쓴 회차 본문에서 "지문으로만 풀려 있어 평면적이지만, 대사 한 줄로 환원하면 장면이 살아날 단락"을 찾아 대안을 제시합니다.
+
+[중요한 원칙 — 반드시 지킬 것]
+1. 본문을 직접 수정하지 마세요. 제안만 하세요. 작가가 골라서 직접 옮길 것입니다.
+2. 모든 단락이 대사 후보가 아닙니다. 다음 단락은 절대 건드리지 마세요:
+   - 작품 도입부의 강력한 첫 문장
+   - 회차 마지막 단락(클리프행어 임팩트)
+   - 시호의 내적 독백·정체성 흐름·47년 회사원 정체성 표현
+   - 시그니처 대사로 보이는 표현 (예: '아 씨, 이거 실화냐.')
+   - 결정적 묘사(첫 등장 인물 묘사, 결정적 장면의 감각 묘사)
+3. 대사로 환원하기 좋은 단락은 다음과 같습니다:
+   - 캐릭터의 외부 행동을 묘사한 단락 (말했다·물었다·대답했다 같은 said 패턴)
+   - "X는 Y라고 생각했다" 식의 내적 반응이 대화 상대 앞에서 일어나는 경우
+   - 정보 전달이 지문으로 풀려 있는 단락 (대사로 자연스럽게 옮길 수 있는 경우)
+   - 캐릭터 간 관계 변화를 보여줄 수 있는 짧은 교환
+4. 제안하는 대사는:
+   - 캐릭터의 말투·성격에 맞게 작성
+   - 너무 길지 않게 (단락당 1~3줄 대사 권장)
+   - 자연스러운 한국어 회화체
+   - 따옴표(")로 감싸서 출력{char_block}{genre_block}
+
+[회차 본문 — EP{episode_number}]
+{episode_text}
+
+[작업]
+회차 본문에서 대사 환원 후보 단락 {suggest_count}개를 골라 다음 JSON 구조로 응답하세요. 본문 안에 그런 단락이 부족하면 가능한 만큼만 응답해도 됩니다(예: 5~7개).
+
+[JSON 출력 — 이 구조를 정확히 따를 것]
+{{
+  "episode": {episode_number},
+  "suggestions": [
+    {{
+      "id": 1,
+      "location": "EP의 어느 부분인지 (예: '도입부 5번째 단락', '병원 씬 후반', '카페 대화 직전')",
+      "original": "원본 지문 단락 (원문 그대로, 따옴표 없이)",
+      "suggestion": "대사로 환원한 대안 (큰따옴표 포함된 대사 + 짧은 화자 표시 또는 반응 묘사)",
+      "speaker": "발화 캐릭터 이름",
+      "reason": "이 단락을 대사로 풀면 좋은 이유 한 줄 (예: '두 캐릭터 사이 긴장이 행동만으로는 약함', 'said 패턴 반복 해소')",
+      "risk": "low|medium|high (low=시그니처 손상 위험 없음, high=조심스러움)"
+    }}
+  ],
+  "skipped_zones": [
+    "건드리지 않은 영역 한 줄 설명 (예: '도입 첫 3단락 — 시호의 정체성 흐름이라 보존')"
+  ],
+  "summary": "이 회차의 대사 환원 가능성 한 줄 요약"
+}}
+
+JSON만 출력. 마크다운 코드블록(``` 등) 금지. 설명 금지.""".strip()
+
 
 # =================================================================
 # [3] GENRE RULES
