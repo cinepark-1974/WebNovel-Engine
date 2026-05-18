@@ -3272,14 +3272,14 @@ with main_tabs[2]:
                                 for i, imp in enumerate(improvements, 1):
                                     st.markdown(f"{i}. {imp}")
 
-                # ─── v3.0 Phase C — 자가 검수 (5축 + 재료 활용) ──────
+                # ─── v3.2 Phase C — 자가 검수 (10축 종합) ──────
                 if _V3_VALIDATOR_AVAILABLE:
                     st.divider()
-                    st.markdown("### ⚙️ v3.0 자가 검수 — 재료 활용 + 5축 종합")
+                    st.markdown("### ⚙️ v3.2 자가 검수 — 10축 종합")
                     st.caption(
-                        "기획에서 정한 v3.0 재료(포뮬러·모티프·9종 인물 역할·마음 흐름·시장 트리거)가 "
-                        "본문에 실제로 작동했는지 검수합니다. "
-                        "기존 품질 검사가 '본문 품질'을 본다면, 자가 검수는 'v3.0 사양 충족도'를 봅니다."
+                        "10축 검수: 기획 재료 활용 6축(기존) + 산문 위생 4축(v3.2 신규). "
+                        "v3.2 신규 4축 — 대사 비율(40%↑) / 호명·정체성 절제 / "
+                        "산문 위생(A1·반복) / 회차 분량 — 이 SYSTEM_PROMPT의 핵심 룰을 측정합니다."
                     )
 
                     # 검수 모드 설정
@@ -3334,7 +3334,7 @@ with main_tabs[2]:
                     
                     # 자가 검수 실행 버튼
                     if st.button(
-                        f"⚙️ EP{ep_check} 자가 검수 실행 (5축 종합)",
+                        f"⚙️ EP{ep_check} 자가 검수 실행 (10축 종합)",
                         type="primary",
                         key="run_v3_validation_btn",
                     ):
@@ -3350,7 +3350,7 @@ with main_tabs[2]:
                             plant_map_for_val = st.session_state.plant_map_core or None
                             
                             # 1차: 패턴 매칭 검수 (빠름·무비용)
-                            with st.spinner("1차 패턴 매칭 검수 중... (6축 — 떡밥 활용 포함)"):
+                            with st.spinner("1차 패턴 매칭 검수 중... (10축 — v3.2 신규 4축 포함)"):
                                 rule_result = compute_episode_validation_score(
                                     concept=concept,
                                     character_bible=chars_data,
@@ -3421,14 +3421,20 @@ with main_tabs[2]:
                                 w = weakest[0]
                                 st.metric("최저 회차", f"EP{w['ep']} ({w['overall']})")
                         
-                        # 5축 평균
-                        st.markdown("**5축 누적 평균**")
+                        # 10축 평균 (v3.2)
+                        st.markdown("**10축 누적 평균**")
                         axis_labels = {
                             "MATERIAL_USAGE": "재료 활용",
                             "CHARACTER_CONSISTENCY": "캐릭터 차별화",
                             "CLIFFHANGER_STRENGTH": "클리프행어",
                             "MISE_EN_SCENE": "묘사·장면",
                             "MARKET_VIABILITY": "시장 트리거",
+                            "PLANT_USAGE": "떡밥 활용",
+                            # v3.2 신규 4축
+                            "DIALOGUE_RATIO": "대사 비율 (40%↑)",
+                            "NAMING_DISCIPLINE": "호명·정체성 절제 (A15·A16)",
+                            "PROSE_HYGIENE": "산문 위생 (A1·반복)",
+                            "LENGTH_DISCIPLINE": "회차 분량",
                         }
                         for ax, score in summary.get("axis_avgs", {}).items():
                             label = axis_labels.get(ax, ax)

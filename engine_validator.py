@@ -1,27 +1,43 @@
 """
-engine_validator.py — Engine v3.0 Phase C
-==========================================
+engine_validator.py — Engine v3.2 (구 v3.0 Phase C)
+====================================================
 회차 자가 검수·재료 활용 검증·전환점 자동 감지
 
 핵심 함수:
 - validate_planning_to_writing_mapping() — 기획 재료가 본문에 반영됐는가
-- compute_episode_validation_score()    — 5축 종합 점수
+- compute_episode_validation_score()    — 10축 종합 점수 (v3.2부터)
 - detect_transition_episodes()          — 마음 흐름 단계 전환점 자동 감지
 - generate_material_usage_report()      — 작가용 가시화 리포트
 - get_validation_mode_for_episode()     — 회차별 검수 모드 결정
 - summarize_cumulative_25()             — 25화 모니터링 누적 대시보드 데이터
 
-5축 검수:
-1. MATERIAL_USAGE        — 기획 재료가 본문에 활용됐는가 (★ critical)
-2. CHARACTER_CONSISTENCY — 9종 인물 역할로 차별화됐는가 (★ critical)
-3. CLIFFHANGER_STRENGTH  — 클리프행어 분포가 시장 표준 안인가
-4. MISE_EN_SCENE         — 묘사·장면 강도 적정한가
-5. MARKET_VIABILITY      — 시장 트리거 5종 충족도
+10축 검수 (v3.2):
+[기존 6축 — 가중치 합 50%]
+1. MATERIAL_USAGE        — 기획 재료가 본문에 활용됐는가 (가중치 0.12)
+2. CHARACTER_CONSISTENCY — 9종 인물 역할로 차별화됐는가 (가중치 0.08)
+3. CLIFFHANGER_STRENGTH  — 클리프행어 분포가 시장 표준 안인가 (가중치 0.08)
+4. MISE_EN_SCENE         — 묘사·장면 강도 적정한가 (가중치 0.05)
+5. MARKET_VIABILITY      — 시장 트리거 5종 충족도 (가중치 0.08)
+6. PLANT_USAGE           — 떡밥 활용도 (가중치 0.09)
+
+[신규 4축 — 가중치 합 50%]
+7. DIALOGUE_RATIO        — 대사 비율 40% 기준 (가중치 0.20)
+8. NAMING_DISCIPLINE     — A15·A16 호명·정체성 키워드 절제 (가중치 0.12)
+9. PROSE_HYGIENE         — said 뒤붙이기 + 회차 간 반복 문구 (가중치 0.12)
+10. LENGTH_DISCIPLINE    — 회차 분량 미달/초과 (가중치 0.06)
 
 원칙:
 - 본 모듈은 LLM 호출 없이 텍스트 패턴 매칭으로 1차 검수 (빠름·무비용)
 - 깊은 검수가 필요하면 prompt.py의 build_validation_prompt()로 LLM 호출
 - 회차별 단독 점수 + 누적 단위 점수 분리 제공
+
+변경 이력:
+- v3.0: 5축 + PLANT_USAGE 추가 (6축)
+- v3.2: 신규 4축 추가 (10축) + 점수 산출 구조 개편
+        · 모든 축의 기본 점수 50점으로 통일 (보너스+페널티 균형)
+        · 빈 데이터 자동 점수 부여 폐지 — 측정 불가 시 명시적 N/A
+        · 신규 4축이 SYSTEM_PROMPT의 핵심 룰(대사 비율 / A1 / A15 / A16) 측정
+        · 가중치 재배분 — 신규 4축 합 50%
 """
 
 from typing import List, Dict, Optional, Tuple
@@ -421,7 +437,7 @@ def _count_keyword_partial_hits(keywords: list, text: str) -> int:
 
 
 # ============================================================================
-# 2. compute_episode_validation_score — 5축 종합 점수
+# 2. compute_episode_validation_score — 10축 종합 점수 (v3.2)
 # ============================================================================
 def compute_episode_validation_score(
     concept: dict,
@@ -431,8 +447,9 @@ def compute_episode_validation_score(
     total_eps: int = 42,
     cliffhanger_type: Optional[str] = None,
     plant_map: Optional[dict] = None,  # ★ v3.0+ — 떡밥 활용도 검수용
+    platform: str = "카카오페이지",     # ★ v3.2+ — 분량 표준 결정용
 ) -> dict:
-    """회차 단독 6축 종합 점수.
+    """회차 단독 10축 종합 점수 (v3.2부터 확장).
     
     Returns:
         {
@@ -442,7 +459,11 @@ def compute_episode_validation_score(
                 "CLIFFHANGER_STRENGTH": {...},
                 "MISE_EN_SCENE":        {...},
                 "MARKET_VIABILITY":     {...},
-                "PLANT_USAGE":          {...},  # ★ 신규 — 떡밥 활용도
+                "PLANT_USAGE":          {...},
+                "DIALOGUE_RATIO":       {...},   # ★ v3.2 신규
+                "NAMING_DISCIPLINE":    {...},   # ★ v3.2 신규
+                "PROSE_HYGIENE":        {...},   # ★ v3.2 신규
+                "LENGTH_DISCIPLINE":    {...},   # ★ v3.2 신규
             },
             "overall": 0~100,
             "grade": "PASS|WARN|REDO",
@@ -451,6 +472,7 @@ def compute_episode_validation_score(
     """
     axes = {}
     
+    # ─── 기존 6축 ─────────────────────────────────
     # 1) MATERIAL_USAGE
     mu = validate_planning_to_writing_mapping(
         concept, character_bible, written_text, ep_number, total_eps
@@ -500,7 +522,7 @@ def compute_episode_validation_score(
         "detail": market_score["detail"],
     }
     
-    # 6) ★ PLANT_USAGE — 떡밥 활용도 (v3.0+ 신규)
+    # 6) PLANT_USAGE — 떡밥 활용도 (v3.0+ 신규)
     plant_score = _score_plant_usage(plant_map, written_text, ep_number)
     axes["PLANT_USAGE"] = {
         "score": plant_score["score"],
@@ -508,14 +530,53 @@ def compute_episode_validation_score(
         "detail": plant_score["detail"],
     }
     
-    # 종합 점수 (가중 평균) — 6축으로 재조정
+    # ─── [v3.2 신규] 신규 4축 ─────────────────────
+    # 7) DIALOGUE_RATIO — 대사 비율 (SYSTEM_PROMPT의 핵심 룰)
+    dlg_score = _score_dialogue_ratio(written_text)
+    axes["DIALOGUE_RATIO"] = {
+        "score": dlg_score["score"],
+        "critical": False,
+        "detail": dlg_score["detail"],
+    }
+    
+    # 8) NAMING_DISCIPLINE — A15·A16 호명·정체성 키워드
+    naming_score = _score_naming_discipline(written_text, character_bible)
+    axes["NAMING_DISCIPLINE"] = {
+        "score": naming_score["score"],
+        "critical": False,
+        "detail": naming_score["detail"],
+    }
+    
+    # 9) PROSE_HYGIENE — said 뒤붙이기 + 회차 내 반복
+    hygiene_score = _score_prose_hygiene(written_text)
+    axes["PROSE_HYGIENE"] = {
+        "score": hygiene_score["score"],
+        "critical": False,
+        "detail": hygiene_score["detail"],
+    }
+    
+    # 10) LENGTH_DISCIPLINE — 회차 분량 규율
+    length_score = _score_length_discipline(written_text, platform=platform)
+    axes["LENGTH_DISCIPLINE"] = {
+        "score": length_score["score"],
+        "critical": False,
+        "detail": length_score["detail"],
+    }
+    
+    # ─── 종합 점수 (v3.2 신규 가중치) ────────────
+    # 기존 6축 합 0.50 + 신규 4축 합 0.50
     weights = {
-        "MATERIAL_USAGE":         0.25,  # 0.30 → 0.25
-        "CHARACTER_CONSISTENCY":  0.20,  # 0.25 → 0.20
-        "CLIFFHANGER_STRENGTH":   0.15,  # 유지
-        "MISE_EN_SCENE":          0.10,  # 유지
-        "MARKET_VIABILITY":       0.15,  # 0.20 → 0.15
-        "PLANT_USAGE":            0.15,  # 신규
+        "MATERIAL_USAGE":         0.12,
+        "CHARACTER_CONSISTENCY":  0.08,
+        "CLIFFHANGER_STRENGTH":   0.08,
+        "MISE_EN_SCENE":          0.05,
+        "MARKET_VIABILITY":       0.08,
+        "PLANT_USAGE":            0.09,
+        # ─ 신규 4축 ─
+        "DIALOGUE_RATIO":         0.20,
+        "NAMING_DISCIPLINE":      0.12,
+        "PROSE_HYGIENE":          0.12,
+        "LENGTH_DISCIPLINE":      0.06,
     }
     overall = sum(axes[ax]["score"] * w for ax, w in weights.items())
     overall = int(round(overall))
@@ -995,6 +1056,370 @@ def _score_plant_usage(plant_map: Optional[dict], text: str, ep_number: int) -> 
     }
 
 
+# ============================================================================
+# [v3.2 신규] 신규 4축 점수 함수
+# ============================================================================
+
+def _score_dialogue_ratio(text: str) -> dict:
+    """[v3.2 신규] 대사 비율 점수.
+    
+    SYSTEM_PROMPT 룰: 대사 비율 40% 이상 (모바일 가독성).
+    
+    측정:
+    - 단락 단위로 큰따옴표(")로 시작하는 단락의 글자수 비율
+    - 40% 이상 = 90~100점 (시장 표준)
+    - 30~40%  = 60~89점 (양호)
+    - 20~30%  = 30~59점 (미달)
+    - 20% 미만 = 0~29점 (심각)
+    
+    Returns:
+        {"score": 0~100, "detail": {"ratio_pct", "dialogue_chars", "total_chars", "threshold"}}
+    """
+    # 기본 detail 구조 (가드 케이스에서도 유지)
+    default_detail = {
+        "ratio_pct": 0.0,
+        "dialogue_chars": 0,
+        "total_chars": 0,
+        "threshold": 40,
+    }
+    
+    if not text or len(text) < 100:
+        return {"score": 50, "detail": {**default_detail, "reason": "본문 너무 짧음"}}
+    
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    if not lines:
+        return {"score": 50, "detail": {**default_detail, "reason": "단락 없음"}}
+    
+    # 회차 제목(EP로 시작) 제외
+    body_lines = [l for l in lines if not l.startswith("EP")]
+    
+    dialogue_chars = 0
+    total_chars = 0
+    for line in body_lines:
+        line_len = len(line)
+        total_chars += line_len
+        # 큰따옴표로 시작 = 대사 단락
+        if line.startswith('"') or line.startswith('\u201c') or line.startswith('\u201d'):
+            dialogue_chars += line_len
+    
+    if total_chars == 0:
+        return {"score": 50, "detail": {**default_detail, "reason": "본문 글자수 0"}}
+    
+    ratio = dialogue_chars / total_chars
+    ratio_pct = ratio * 100
+    
+    # 점수 산출
+    if ratio_pct >= 40:
+        # 40% 이상 — 표준 충족. 50% 이상이면 만점
+        score = min(100, 90 + int((ratio_pct - 40) * 1.0))
+    elif ratio_pct >= 30:
+        # 30~40% — 양호. 선형 60→89
+        score = 60 + int((ratio_pct - 30) * 2.9)
+    elif ratio_pct >= 20:
+        # 20~30% — 미달. 선형 30→59
+        score = 30 + int((ratio_pct - 20) * 2.9)
+    else:
+        # 20% 미만 — 심각. 선형 0→29
+        score = max(0, int(ratio_pct * 1.45))
+    
+    return {
+        "score": score,
+        "detail": {
+            "ratio_pct": round(ratio_pct, 1),
+            "dialogue_chars": dialogue_chars,
+            "total_chars": total_chars,
+            "threshold": 40,
+        }
+    }
+
+
+def _score_naming_discipline(text: str, character_bible=None) -> dict:
+    """[v3.2 신규] 캐릭터 호명 + 정체성 키워드 절제 점수.
+    
+    A15: 정체성 키워드(회귀·환생·이세계 등 추상 명사) 회차당 5회 이하
+    A16: 캐릭터 이름 호명 단락당 2회 이하
+    
+    측정:
+    - 단락당 같은 이름 3회 이상 등장 = 위반
+    - 회차 전체에서 핵심 캐릭터 이름 등장 횟수 (관대 기준: 회차당 30회 초과 시 페널티)
+    - 정체성 키워드(환생/회귀/빙의/이번 생/다른 사람 등) 회차당 등장 횟수
+    
+    Returns:
+        {"score": 0~100, "detail": {위반 내용}}
+    """
+    if not text:
+        return {"score": 50, "detail": {"reason": "본문 없음"}}
+    
+    paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
+    body_paragraphs = [p for p in paragraphs if not p.startswith("EP")]
+    
+    # 캐릭터 이름 후보 추출 (풀네임 + 줄임형 모두)
+    # 예: "한시호 (유빈의 몸)" → ["한시호", "시호"] 둘 다 추출
+    name_candidates = []
+    if character_bible:
+        char_dict = _normalize_character_data(character_bible)
+        import re
+        for full_name in char_dict.keys():
+            if not full_name:
+                continue
+            # 괄호 안 부가 정보 제거
+            clean = re.sub(r'[\(\[].*?[\)\]]', '', full_name).strip()
+            # 한글 이름 부분 추출
+            parts = re.findall(r'[가-힣]{2,5}', clean)
+            for part in parts:
+                if part not in name_candidates:
+                    name_candidates.append(part)
+                # ★ 한국 이름 풀네임(3글자)에서 성을 떼고 줄임형도 추가
+                # 예: "한시호" → "시호", "박재윤" → "재윤"
+                if len(part) == 3:
+                    short = part[1:]
+                    if len(short) == 2 and short not in name_candidates:
+                        name_candidates.append(short)
+                # 4글자 이름(예: 김지훈우)도 비슷하게
+                elif len(part) == 4:
+                    short = part[1:]  # 3글자 줄임
+                    if short not in name_candidates:
+                        name_candidates.append(short)
+    
+    # 단락당 같은 이름 3회 이상 위반 카운트 (풀네임 + 줄임형 중복 카운트 방지)
+    # 풀네임이 단락에 있으면 그 부분은 빼고 줄임형 카운트
+    a16_violations = 0
+    for para in body_paragraphs:
+        violated = False
+        for name in name_candidates:
+            count = para.count(name)
+            # 단축형 카운트 시 풀네임에 포함된 건 빼기
+            for other in name_candidates:
+                if other != name and len(other) > len(name) and name in other:
+                    count -= para.count(other)
+            if count >= 3:
+                a16_violations += 1
+                violated = True
+                break  # 단락당 1번만 카운트
+        # done
+    
+    # 회차 전체 이름 호명 빈도 (단축형은 풀네임 매칭 제외)
+    name_total_counts = {}
+    for name in name_candidates:
+        if not name:
+            continue
+        raw_count = text.count(name)
+        # 단축형이면 풀네임에 포함된 건 빼기
+        for other in name_candidates:
+            if other != name and len(other) > len(name) and name in other:
+                raw_count -= text.count(other)
+        if raw_count > 0:
+            name_total_counts[name] = raw_count
+    
+    # 회차당 30회 초과 이름 수
+    over_30_names = [n for n, c in name_total_counts.items() if c > 30]
+    
+    # A15 정체성 키워드 (추상 명사)
+    identity_kws = ["환생", "회귀", "빙의", "전이", "이세계", "다음 생", "이번 생", "다른 사람", "내 몸", "이 몸"]
+    identity_total = sum(text.count(kw) for kw in identity_kws)
+    
+    # ─ 점수 산출 ─
+    score = 100  # 기본 만점에서 페널티 차감
+    
+    # A16 위반 페널티 (단락당 같은 이름 3회+)
+    if a16_violations > 0:
+        # 회차 단락 수 대비 위반 비율
+        violation_rate = a16_violations / max(len(body_paragraphs), 50)
+        a16_penalty = min(40, int(violation_rate * 200))  # 최대 40점 차감
+        score -= a16_penalty
+    
+    # 회차당 호명 페널티 — 초과 횟수에 비례
+    # 30~40회: -5, 40~50회: -15, 50~70회: -25, 70회+: -40
+    for name, count in name_total_counts.items():
+        if count > 70:
+            score -= 40
+        elif count > 50:
+            score -= 25
+        elif count > 40:
+            score -= 15
+        elif count > 30:
+            score -= 5
+    # 최대 차감 캡 (캐릭터 여러 명 초과해도 50점까지만 차감)
+    if score < 50:
+        score = max(50, score)
+    
+    # A15 정체성 키워드 초과 페널티 (15회 이상)
+    if identity_total > 15:
+        kw_penalty = min(20, int((identity_total - 15) * 1.5))
+        score -= kw_penalty
+    
+    score = max(0, min(100, score))
+    
+    return {
+        "score": score,
+        "detail": {
+            "a16_paragraph_violations": a16_violations,
+            "names_over_30": over_30_names,
+            "name_total_counts": {n: c for n, c in name_total_counts.items() if c > 10},
+            "identity_keyword_total": identity_total,
+            "threshold_a16": "단락당 3회 이상 위반",
+            "threshold_naming": "회차당 30회 초과",
+            "threshold_identity": "회차당 15회 초과",
+        }
+    }
+
+
+def _score_prose_hygiene(text: str, prev_episodes_text: str = "") -> dict:
+    """[v3.2 신규] 산문 위생 점수 — said 뒤붙이기 + 회차 간 반복 문구.
+    
+    A1: said 뒤붙이기 금지 ("X가 말했다" 패턴)
+    회차 간 반복 문구 — 본 회차에서 너무 자주 등장하는 짧은 구절
+    
+    측정:
+    - "X가 말했다" / "X는 말했다" / "X가 물었다" / "X가 대답했다" 같은 패턴 빈도
+    - 같은 짧은 구절(8~25자) 이번 회차에서 4회 이상 반복
+    
+    Returns:
+        {"score": 0~100, "detail": {...}}
+    """
+    if not text:
+        return {"score": 50, "detail": {"reason": "본문 없음"}}
+    
+    import re
+    
+    # A1: said 뒤붙이기 패턴 (한글 이름 + 조사 + 발화 동사)
+    said_patterns = [
+        r'[가-힣]{2,4}[가는이은]\s*말했다\.?',
+        r'[가-힣]{2,4}[가는이은]\s*물었다\.?',
+        r'[가-힣]{2,4}[가는이은]\s*대답했다\.?',
+        r'[가-힣]{2,4}[가는이은]\s*외쳤다\.?',
+        r'[가-힣]{2,4}[가는이은]\s*속삭였다\.?',
+        r'[가-힣]{2,4}[가는이은]\s*되물었다\.?',
+        r'[가-힣]{2,4}의\s*입에서\s*나왔다\.?',
+    ]
+    
+    said_count = 0
+    said_examples = []
+    for pat in said_patterns:
+        matches = re.findall(pat, text)
+        said_count += len(matches)
+        if matches and len(said_examples) < 5:
+            said_examples.extend(matches[:3])
+    
+    # 회차 내 반복 문구 (8~25자 짧은 구절)
+    from collections import Counter
+    paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
+    
+    # 따옴표 정리한 짧은 구절 카운트
+    short_phrases = Counter()
+    for line in paragraphs:
+        clean = line.strip().strip('"').strip("'").strip('\u201c').strip('\u201d').strip('\u2018').strip('\u2019').strip()
+        if 8 <= len(clean) <= 25:
+            short_phrases[clean] += 1
+    
+    # 이번 회차에서 3회 이상 반복된 구절 (캐릭터 시그니처 대사는 어쩔 수 없음)
+    heavy_repeats_in_ep = [(p, c) for p, c in short_phrases.items() if c >= 3]
+    
+    # ─ 점수 산출 ─
+    score = 100
+    
+    # said 뒤붙이기 페널티
+    if said_count >= 1:
+        # 회차당 said 패턴: 1~3회 = -5, 4~7회 = -15, 8~14회 = -30, 15회+ = -50
+        if said_count <= 3:
+            score -= 5
+        elif said_count <= 7:
+            score -= 15
+        elif said_count <= 14:
+            score -= 30
+        else:
+            score -= 50
+    
+    # 회차 내 짧은 구절 반복 페널티
+    if heavy_repeats_in_ep:
+        # 시그니처 대사 보호 — 가장 많이 반복된 1개는 페널티 50%만
+        sorted_reps = sorted(heavy_repeats_in_ep, key=lambda x: -x[1])
+        for i, (phrase, count) in enumerate(sorted_reps):
+            penalty_per = 5 if i == 0 else 8  # 첫 번째(시그니처 추정) 가벼움
+            total_penalty = penalty_per * (count - 2)  # 3회부터 페널티
+            score -= min(20, total_penalty)  # 구절당 최대 20점
+    
+    score = max(0, min(100, score))
+    
+    return {
+        "score": score,
+        "detail": {
+            "said_pattern_count": said_count,
+            "said_examples": said_examples[:5],
+            "heavy_repeats_in_ep": [(p, c) for p, c in heavy_repeats_in_ep[:5]],
+            "threshold_said": "회차당 4회 이상 페널티 증가",
+            "threshold_repeat": "회차 내 같은 구절 3회 이상",
+        }
+    }
+
+
+def _score_length_discipline(text: str, platform: str = "카카오페이지") -> dict:
+    """[v3.2 신규] 회차 분량 규율 점수.
+    
+    카카오페이지 표준: 5,000~6,500자 (공백 포함)
+    - 5,000~6,500자: 만점 100점
+    - 4,500~5,000자: 80~99점 (약간 짧음)
+    - 6,500~7,500자: 80~99점 (약간 김)
+    - 4,000~4,500자 또는 7,500~8,500자: 60~79점
+    - 3,000~4,000자 또는 8,500~9,500자: 30~59점
+    - 3,000자 미만 또는 9,500자 초과: 0~29점 (심각)
+    
+    Returns:
+        {"score": 0~100, "detail": {"length": int, "in_range": bool}}
+    """
+    if not text:
+        return {"score": 0, "detail": {"reason": "본문 없음"}}
+    
+    # 회차 제목 줄 제외
+    lines = text.split('\n')
+    if lines and lines[0].startswith("EP"):
+        body = '\n'.join(lines[1:]).strip()
+    else:
+        body = text.strip()
+    
+    # 공백 포함 글자수 (개행 제외)
+    length = len(body.replace('\n', ''))
+    
+    if 5000 <= length <= 6500:
+        score = 100
+        in_range = True
+    elif 4500 <= length < 5000:
+        score = 80 + int((length - 4500) / 500 * 19)
+        in_range = False
+    elif 6500 < length <= 7500:
+        score = 99 - int((length - 6500) / 1000 * 19)
+        in_range = False
+    elif 4000 <= length < 4500:
+        score = 60 + int((length - 4000) / 500 * 19)
+        in_range = False
+    elif 7500 < length <= 8500:
+        score = 79 - int((length - 7500) / 1000 * 19)
+        in_range = False
+    elif 3000 <= length < 4000:
+        score = 30 + int((length - 3000) / 1000 * 29)
+        in_range = False
+    elif 8500 < length <= 9500:
+        score = 59 - int((length - 8500) / 1000 * 29)
+        in_range = False
+    else:
+        # 심각한 미달 또는 초과
+        if length < 3000:
+            score = max(0, int(length / 3000 * 29))
+        else:
+            score = max(0, 29 - int((length - 9500) / 1000 * 10))
+        in_range = False
+    
+    return {
+        "score": score,
+        "detail": {
+            "length": length,
+            "in_range": in_range,
+            "target_range": "5,000~6,500자",
+            "platform": platform,
+        }
+    }
+
+
 def _extract_plant_keywords(name: str, description: str) -> list:
     """[v3.0+ 정밀화] 떡밥 명사·설명에서 검색용 키워드 풍부 추출.
     
@@ -1462,6 +1887,63 @@ def _self_test():
     # 31화는 전환점 → 자동
     mode_decision_31 = get_validation_mode_for_episode(31, "auto_until_25", concept_4h, 42)
     assert mode_decision_31["should_run_auto"] is True
+    
+    # ★ [v3.2] 신규 4축 검증
+    # 대사 비율: 대사 풍부한 본문은 90+, 지문만은 0~30
+    high_dlg = ('일반 도입부 문장입니다. 그가 다가왔다.\n'
+                '"안녕하세요. 처음 뵙겠습니다. 정말 만나서 반갑습니다."\n'
+                '시호는 천천히 고개를 들었다.\n'
+                '"네, 안녕하세요. 처음 뵙겠습니다."\n'
+                '"여기서 일하시는 분이세요? 어제는 못 봤는데요."\n'
+                '짧은 침묵이 흘렀다.\n'
+                '"네, 오늘부터 시작입니다. 어떻게 알고 오셨나요?"\n'
+                '"이 카페에 자주 오는 친구가 있어서요."\n')
+    r = _score_dialogue_ratio(high_dlg)
+    assert r["score"] >= 60, f"대사 풍부 본문 점수 미달: {r['score']}"
+    
+    low_dlg = ('지문만 가득한 본문입니다. ' * 50)
+    r = _score_dialogue_ratio(low_dlg)
+    assert r["score"] <= 30, f"지문만 본문 점수 과다: {r['score']}"
+    
+    # said 뒤붙이기 다수 → 페널티
+    said_heavy = ('시호가 말했다. 어쩌고.\n' * 15) + "일반 본문 " * 100
+    r = _score_prose_hygiene(said_heavy)
+    assert r["score"] < 60, f"said 다수 페널티 미작동: {r['score']}"
+    
+    # 분량 표준
+    normal = ("표준 분량 회차입니다. " * 500)
+    r = _score_length_discipline(normal)
+    assert r["score"] == 100, f"표준 분량 점수 이상: {r['score']}"
+    
+    # 분량 미달
+    short = "짧은 회차." * 50
+    r = _score_length_discipline(short)
+    assert r["score"] < 30, f"미달 분량 페널티 미작동: {r['score']}"
+    
+    # 호명 과다 → 페널티
+    char_bible_test = {"한시호": {"name": "한시호"}}
+    over_naming = "시호는 일했다. " * 60  # 시호 60회 등장
+    r = _score_naming_discipline(over_naming, char_bible_test)
+    assert r["score"] < 80, f"호명 과다 페널티 미작동: {r['score']}"
+    
+    # 10축 종합 — 정상 데이터로 PASS 나오는지
+    test_text = """EP1. 테스트
+첫 단락 본문입니다. 그가 다가왔다.
+"안녕하세요."
+시호는 천천히 고개를 들었다.
+"네, 처음 뵙겠습니다."
+""" + ('일반 본문 한 단락. ' * 200) + ('\n"대사 한 줄." ' * 50)
+    result = compute_episode_validation_score(
+        {"title": "테스트", "genre": "현대로맨스"},
+        char_bible_test,
+        test_text,
+        ep_number=1, total_eps=50,
+    )
+    assert "DIALOGUE_RATIO" in result["axes"], "DIALOGUE_RATIO 축 누락"
+    assert "NAMING_DISCIPLINE" in result["axes"], "NAMING_DISCIPLINE 축 누락"
+    assert "PROSE_HYGIENE" in result["axes"], "PROSE_HYGIENE 축 누락"
+    assert "LENGTH_DISCIPLINE" in result["axes"], "LENGTH_DISCIPLINE 축 누락"
+    assert len(result["axes"]) == 10, f"축 개수 불일치: {len(result['axes'])}"
     
     return True
 
