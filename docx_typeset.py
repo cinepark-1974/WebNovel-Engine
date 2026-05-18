@@ -40,6 +40,9 @@ docx_typeset.py — 웹소설 조판 양식 출력 모듈
         \\<...\\> 백슬래시 꺾쇠 escape → '...' (작은따옴표) 자동 교체
         대사 단락도 escape 정리 적용
         모든 빌더(safe_season/styled_episode/typeset_episode/typeset_milestone)에 적용
+- v3.1.3: 대사 단락 호흡 강화 — 가독성 개선
+        대사 스타일의 위아래 여백 6pt → 18pt 확대 (씬구분과 동일)
+        큰따옴표·작은따옴표 모두 위아래 한 줄 띄움 효과로 시각적 분리
 """
 
 from io import BytesIO
@@ -174,11 +177,12 @@ def _ensure_paragraph_styles(doc, body_font: str = '맑은 고딕'):
           line_spacing=1.5,
           space_before=Pt(0), space_after=Pt(6))
     
-    # 대사 — 양쪽 정렬, 줄간격 1.8, 위아래 여백 (한 줄 바꿈 효과)
+    # 대사 — 양쪽 정렬, 줄간격 1.8, 위아래 여백 크게 (씬구분 수준의 호흡)
+    # 큰따옴표·작은따옴표 모두 위아래 한 줄 띄움 효과로 가독성 확보
     _make(STYLE_DIALOGUE, 11,
           align=WD_ALIGN_PARAGRAPH.JUSTIFY,
           line_spacing=1.8,
-          space_before=Pt(6), space_after=Pt(6))
+          space_before=Pt(18), space_after=Pt(18))
     
     # 씬구분 — 가운데 정렬, 위아래 여백 크게 (한 줄 띄움 효과)
     _make(STYLE_SCENE_BREAK, 11,
