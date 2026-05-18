@@ -30,6 +30,10 @@ docx_typeset.py — 웹소설 조판 양식 출력 모듈
         Word 스타일 패널에서 한 번 수정 시 같은 종류 단락 일괄 변경 가능
         + 메타정보 클리닝(author/comments 제거, 추적 정보 비움)
         + build_safe_season_docx, build_styled_episode_docx에 동일 스타일 적용
+- v3.1.1: 씬구분 인식 강화 — 마크다운 escape 흔적 정리
+        \\*\\*\\*, \\*, * * *, ** 등 LLM 출력 변형 모두 씬구분으로 인식
+        출력 시 깨끗한 '***'로 정규화, 위아래 여백 18pt로 확대
+        본문 단락의 \\* 백슬래시 escape 자동 제거, *강조* 표식 정리
 """
 
 from io import BytesIO
@@ -170,20 +174,21 @@ def _ensure_paragraph_styles(doc, body_font: str = '맑은 고딕'):
           line_spacing=1.8,
           space_before=Pt(6), space_after=Pt(6))
     
-    # 씬구분 — 가운데 정렬, 위아래 여백 크게
+    # 씬구분 — 가운데 정렬, 위아래 여백 크게 (한 줄 띄움 효과)
     _make(STYLE_SCENE_BREAK, 11,
           align=WD_ALIGN_PARAGRAPH.CENTER,
           line_spacing=1.5,
-          space_before=Pt(12), space_after=Pt(12))
+          space_before=Pt(18), space_after=Pt(18))
     
     return out
 
 
 def _classify_paragraph(line: str) -> str:
-    """단락 한 줄을 5종 중 하나로 분류합니다.
+    r"""단락 한 줄을 5종 중 하나로 분류합니다.
     
     Returns:
         'scene_break' — *** 또는 ※※※ 같은 씬 구분자
+                        (\*\*\*, * * *, \*, ** 같은 마크다운 escape 변형 포함)
         'dialogue'    — 큰따옴표 또는 작은따옴표로 시작 (외부 대사 + 속마음)
         'narration'   — 그 외 일반 본문
     
@@ -193,9 +198,13 @@ def _classify_paragraph(line: str) -> str:
     if not s:
         return 'narration'
     
-    # 씬 구분자 — ***, ※※※, ===, ---, ◆◆◆, ★★★ 등 단독 단락
-    # 글자가 같은 기호로만 3개 이상 반복되면 씬 구분
-    if len(s) >= 3 and all(c in '*※=─-—◆★☆◇○●·.' for c in s):
+    # 씬 구분자 — 별표·기호류 조합 감지
+    # 1) 백슬래시·공백을 제거한 후 검사 (마크다운 escape \*\*\* 대응)
+    # 2) 남은 문자가 모두 씬 구분 기호이고 1개 이상이면 씬 구분
+    # 3) 단, '*문장*' 같은 강조 마크다운은 글자가 섞여 있으므로 제외됨
+    stripped = s.replace('\\', '').replace(' ', '')
+    SCENE_CHARS = '*※=─-—◆★☆◇○●·.·'
+    if stripped and all(c in SCENE_CHARS for c in stripped):
         return 'scene_break'
     
     # 대사 — 큰따옴표 또는 작은따옴표로 시작
@@ -210,6 +219,39 @@ def _classify_paragraph(line: str) -> str:
     return 'narration'
 
 
+def _normalize_scene_break(line: str) -> str:
+    r"""씬구분 단락의 표기를 정규화합니다.
+    
+    \*\*\*, \*, * * *, ***, ** 등 모든 변형 → '***' 깨끗한 형태로 통일.
+    """
+    return '***'
+
+
+def _strip_inline_md_escapes(line: str) -> str:
+    """본문 단락에서 마크다운 escape 흔적을 제거합니다.
+    
+    - '\\*' (백슬래시+별) 같은 LLM이 남긴 escape를 제거하되,
+      본문에 의도적으로 들어간 별 자체는 보존하지 않음 (씬구분이 아닌 강조용 별은 거의 없음).
+    - 단락 양 끝에 강조 표식 *text* 가 있으면 별만 제거하고 텍스트는 살림.
+    """
+    s = line
+    # 1) 백슬래시 escape 제거
+    s = s.replace('\\*', '*').replace('\\_', '_')
+    # 2) 양 끝 *text* 강조 표식 제거 (한 줄 전체가 *...*인 경우)
+    stripped = s.strip()
+    if (len(stripped) >= 3 
+        and stripped.startswith('*') and stripped.endswith('*')
+        and not stripped.replace(' ', '').replace('*', '') == ''):
+        # 글자가 있는 *...* 패턴
+        inner = stripped.strip('*').strip()
+        if inner:
+            # 좌우 공백 보존
+            left_ws = s[:len(s) - len(s.lstrip())]
+            right_ws = s[len(s.rstrip()):]
+            s = left_ws + inner + right_ws
+    return s
+
+
 def _add_classified_paragraph(doc, line: str, styles_map: dict):
     """분류된 스타일을 적용해서 단락을 추가합니다.
     
@@ -221,13 +263,18 @@ def _add_classified_paragraph(doc, line: str, styles_map: dict):
     kind = _classify_paragraph(line)
     
     if kind == 'scene_break':
-        style_name = STYLE_SCENE_BREAK
-    elif kind == 'dialogue':
-        style_name = STYLE_DIALOGUE
-    else:
-        style_name = STYLE_NARRATION
+        # 씬구분 표기를 깨끗한 '***'로 정규화
+        clean = _normalize_scene_break(line)
+        p = doc.add_paragraph(clean, style=STYLE_SCENE_BREAK)
+        return p
     
-    p = doc.add_paragraph(line.strip(), style=style_name)
+    if kind == 'dialogue':
+        p = doc.add_paragraph(line.strip(), style=STYLE_DIALOGUE)
+        return p
+    
+    # 지문 — 인라인 마크다운 escape 흔적 제거
+    clean_line = _strip_inline_md_escapes(line.strip())
+    p = doc.add_paragraph(clean_line, style=STYLE_NARRATION)
     return p
 
 
@@ -717,6 +764,21 @@ def _self_test():
     assert _classify_paragraph("일반 지문입니다.") == 'narration', "지문 분류 실패"
     assert _classify_paragraph("***") == 'scene_break', "씬구분 분류 실패"
     assert _classify_paragraph("※※※") == 'scene_break', "씬구분(※) 분류 실패"
+    
+    # ★ [v3.1] 씬구분 변형 모두 인식 — 마크다운 escape 대응
+    assert _classify_paragraph(r"\*\*\*") == 'scene_break', "백슬래시 escape \\*\\*\\* 인식 실패"
+    assert _classify_paragraph(r"\*") == 'scene_break', "백슬래시 escape \\* 인식 실패"
+    assert _classify_paragraph("* * *") == 'scene_break', "공백 포함 * * * 인식 실패"
+    assert _classify_paragraph("**") == 'scene_break', "** 인식 실패"
+    # 강조 마크다운은 씬구분이 아님
+    assert _classify_paragraph("*뮤즈 없이, 당신과 함께 채울게요.*") == 'narration', \
+        "강조 마크다운을 씬구분으로 오인식"
+    
+    # ★ [v3.1] 인라인 마크다운 escape 제거
+    assert _strip_inline_md_escapes("그는 \\*손등\\*을 봤다.") == "그는 *손등*을 봤다.", \
+        "백슬래시 escape 제거 실패"
+    assert _strip_inline_md_escapes("*뮤즈 없이, 당신과 함께 채울게요.*") == \
+        "뮤즈 없이, 당신과 함께 채울게요.", "강조 별표 제거 실패"
     
     # ★ [v3.1] 메타정보 클리닝 검증
     from io import BytesIO
