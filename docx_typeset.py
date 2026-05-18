@@ -34,6 +34,12 @@ docx_typeset.py — 웹소설 조판 양식 출력 모듈
         \\*\\*\\*, \\*, * * *, ** 등 LLM 출력 변형 모두 씬구분으로 인식
         출력 시 깨끗한 '***'로 정규화, 위아래 여백 18pt로 확대
         본문 단락의 \\* 백슬래시 escape 자동 제거, *강조* 표식 정리
+- v3.1.2: 회차 본문 위생 처리 — 안전망 필터
+        회차 끝의 메타정보 블록 자동 제거 (첫 문장:/리캡 방식:/독자 질문:/
+        클리프행어 유형:/클리프행어 내용:/다음 회차 연결:)
+        \\<...\\> 백슬래시 꺾쇠 escape → '...' (작은따옴표) 자동 교체
+        대사 단락도 escape 정리 적용
+        모든 빌더(safe_season/styled_episode/typeset_episode/typeset_milestone)에 적용
 """
 
 from io import BytesIO
@@ -228,16 +234,24 @@ def _normalize_scene_break(line: str) -> str:
 
 
 def _strip_inline_md_escapes(line: str) -> str:
-    """본문 단락에서 마크다운 escape 흔적을 제거합니다.
+    r"""본문 단락에서 마크다운 escape 흔적을 제거합니다.
     
-    - '\\*' (백슬래시+별) 같은 LLM이 남긴 escape를 제거하되,
-      본문에 의도적으로 들어간 별 자체는 보존하지 않음 (씬구분이 아닌 강조용 별은 거의 없음).
+    - '\*' (백슬래시+별) → '*'
+    - '\_' (백슬래시+언더스코어) → '_'
+    - '\<...\>' (백슬래시 꺾쇠) → "'...'" (작은따옴표로 교체 = 속마음 스타일)
     - 단락 양 끝에 강조 표식 *text* 가 있으면 별만 제거하고 텍스트는 살림.
     """
+    import re
     s = line
-    # 1) 백슬래시 escape 제거
+    
+    # 1) \<...\> → '...' 교체 (작은따옴표 = 속마음 표기)
+    #    LLM이 일기·메모·강조용으로 꺾쇠를 escape한 흔적 정리
+    s = re.sub(r'\\<(.*?)\\>', r"'\1'", s)
+    
+    # 2) 백슬래시 escape 제거 (별, 언더스코어)
     s = s.replace('\\*', '*').replace('\\_', '_')
-    # 2) 양 끝 *text* 강조 표식 제거 (한 줄 전체가 *...*인 경우)
+    
+    # 3) 양 끝 *text* 강조 표식 제거 (한 줄 전체가 *...*인 경우)
     stripped = s.strip()
     if (len(stripped) >= 3 
         and stripped.startswith('*') and stripped.endswith('*')
@@ -249,31 +263,143 @@ def _strip_inline_md_escapes(line: str) -> str:
             left_ws = s[:len(s) - len(s.lstrip())]
             right_ws = s[len(s.rstrip()):]
             s = left_ws + inner + right_ws
+    
     return s
+
+
+# ══════════════════════════════════════════════
+# [v3.1.2] 회차 본문 위생 처리 — 메타정보 블록 제거
+# ══════════════════════════════════════════════
+# LLM이 회차 끝에 자동으로 붙이는 메타정보 블록을 빌드 시점에 안전망 제거.
+# 작가가 직접 손대지 않고도 깨끗한 통합본 출력 가능.
+# ══════════════════════════════════════════════
+
+# 회차 끝에 노출되는 메타 라벨들 (정규화: 공백 제거 + 소문자 처리는 안 함, 한글이므로)
+_META_LABELS = (
+    '첫 문장:', '첫문장:',
+    '리캡 방식:', '리캡방식:', '리캡:',
+    '독자 질문:', '독자질문:',
+    '클리프행어 유형:', '클리프행거 유형:', '클리프행어유형:', '클리프행거유형:',
+    '클리프행어 내용:', '클리프행거 내용:', '클리프행어내용:', '클리프행거내용:',
+    '다음 회차 연결:', '다음회차 연결:', '다음회차연결:', '다음 화 연결:',
+)
+
+
+def _is_meta_label_line(line: str) -> bool:
+    """이 줄이 메타정보 라벨로 시작하는지 판정합니다.
+    
+    예: '첫 문장: 죽으면 끝인 줄 알았다.' → True
+        '리캡 방식: 행동' → True
+        '내가 첫 문장을 쓰자 그가 웃었다.' → False (라벨이 아니라 본문)
+    """
+    s = (line or "").lstrip()
+    for label in _META_LABELS:
+        if s.startswith(label):
+            return True
+    return False
+
+
+def _strip_trailing_meta_block(text: str) -> str:
+    """회차 본문 끝의 메타정보 블록을 제거합니다.
+    
+    동작:
+    - 본문 끝에서 거꾸로 올라가며 메타 라벨 줄을 찾음
+    - 메타 라벨 줄과 그 사이의 빈 줄을 함께 제거
+    - 메타 라벨이 아닌 본문 줄을 만나는 순간 멈춤
+    
+    안전 장치:
+    - 본문 중간에 우연히 메타 라벨처럼 보이는 문장이 있어도 영향 없음 (끝에서만 검사)
+    - 메타 블록이 없으면 원본 그대로 반환
+    - 회차의 80% 이상을 잘라내는 경우 (오인식 의심) 원본 그대로 반환
+    
+    Returns:
+        메타 블록이 제거된 본문 텍스트
+    """
+    if not text or not text.strip():
+        return text
+    
+    lines = text.split('\n')
+    original_len = len(lines)
+    
+    # 뒤에서부터 검사 — 메타 라벨 줄 + 사이의 빈 줄을 모두 잘라냄
+    cut_index = len(lines)  # 이 인덱스 이후를 잘라낸다는 의미
+    found_meta = False
+    
+    i = len(lines) - 1
+    while i >= 0:
+        line = lines[i]
+        stripped = line.strip()
+        
+        if not stripped:
+            # 빈 줄 — 일단 건너뜀 (메타 블록 사이의 공백일 수 있음)
+            i -= 1
+            continue
+        
+        if _is_meta_label_line(line):
+            # 메타 라벨 줄 — 잘라낼 후보
+            cut_index = i
+            found_meta = True
+            i -= 1
+            continue
+        
+        # 메타가 아닌 본문 줄 — 여기서 멈춤
+        break
+    
+    if not found_meta:
+        # 메타 블록 없음 → 원본 반환
+        return text
+    
+    # 안전 장치: 80% 이상 잘라내면 오인식 가능성 — 원본 반환
+    if cut_index < original_len * 0.2:
+        return text
+    
+    # cut_index 직전까지 살리되, 끝부분 빈 줄 정리
+    result_lines = lines[:cut_index]
+    # 끝의 빈 줄 trim
+    while result_lines and not result_lines[-1].strip():
+        result_lines.pop()
+    
+    return '\n'.join(result_lines)
+
+
+def _sanitize_episode_text(text: str) -> str:
+    """[v3.1.2] 회차 본문에 위생 처리 일괄 적용.
+    
+    1) 회차 끝 메타정보 블록 제거 (안전망)
+    2) (단락 단위의 escape 정리는 _add_classified_paragraph에서 수행)
+    """
+    return _strip_trailing_meta_block(text)
 
 
 def _add_classified_paragraph(doc, line: str, styles_map: dict):
     """분류된 스타일을 적용해서 단락을 추가합니다.
+    
+    [v3.1.2] 처리 순서 — escape 정리 먼저, 분류는 나중에.
+    이렇게 해야 '\\<...\\>' 같은 escape가 작은따옴표로 바뀐 뒤
+    '대사' 스타일로 정확히 분류됨.
     
     Args:
         doc: Document 객체
         line: 단락 텍스트
         styles_map: _ensure_paragraph_styles의 반환값
     """
-    kind = _classify_paragraph(line)
+    # 1) 먼저 escape 정리 (씬구분 판별보다 앞)
+    clean_line = _strip_inline_md_escapes(line.strip())
+    
+    # 2) 정리된 결과로 분류
+    kind = _classify_paragraph(clean_line)
     
     if kind == 'scene_break':
         # 씬구분 표기를 깨끗한 '***'로 정규화
-        clean = _normalize_scene_break(line)
+        clean = _normalize_scene_break(clean_line)
         p = doc.add_paragraph(clean, style=STYLE_SCENE_BREAK)
         return p
     
     if kind == 'dialogue':
-        p = doc.add_paragraph(line.strip(), style=STYLE_DIALOGUE)
+        p = doc.add_paragraph(clean_line, style=STYLE_DIALOGUE)
         return p
     
-    # 지문 — 인라인 마크다운 escape 흔적 제거
-    clean_line = _strip_inline_md_escapes(line.strip())
+    # 지문
     p = doc.add_paragraph(clean_line, style=STYLE_NARRATION)
     return p
 
@@ -455,6 +581,9 @@ def build_safe_season_docx(
             doc.add_page_break()
             continue
         
+        # ★ [v3.1.2] 회차 본문 위생 처리 — 메타정보 블록 안전망 제거
+        text = _sanitize_episode_text(text)
+        
         lines = text.split('\n')
         
         # 작품 인장 제거 (이미 표지에 있으니 본문 중복 제거)
@@ -528,6 +657,8 @@ def build_styled_episode_docx(text: str, ep_label: str = "") -> bytes:
     section.bottom_margin = Pt(72)
     
     # 본문 파싱
+    # ★ [v3.1.2] 회차 본문 위생 처리 — 메타정보 블록 안전망 제거
+    text = _sanitize_episode_text(text)
     raw_lines = text.split('\n')
     
     # 첫 줄: 작품 제목 / 둘째 줄: IP 홀더 (인장 없으면 빈 처리)
@@ -586,6 +717,9 @@ def build_typeset_episode(text: str, ep_label: str = "") -> bytes:
     """
     doc = Document()
     _setup_mobile_page(doc)
+    
+    # ★ [v3.1.2] 회차 본문 위생 처리
+    text = _sanitize_episode_text(text)
     
     lines = [line for line in text.split('\n') if line.strip()]
     if not lines:
@@ -689,6 +823,9 @@ def build_typeset_milestone(
         if not ep_text:
             continue
         
+        # ★ [v3.1.2] 회차 본문 위생 처리
+        ep_text = _sanitize_episode_text(ep_text)
+        
         lines = [line for line in ep_text.split('\n') if line.strip()]
         if not lines:
             continue
@@ -779,6 +916,43 @@ def _self_test():
         "백슬래시 escape 제거 실패"
     assert _strip_inline_md_escapes("*뮤즈 없이, 당신과 함께 채울게요.*") == \
         "뮤즈 없이, 당신과 함께 채울게요.", "강조 별표 제거 실패"
+    
+    # ★ [v3.1.2] \<...\> → '...' 교체
+    assert _strip_inline_md_escapes("\\<이 일기를 읽는 사람이 내 다음 생이라면, 잘 부탁해.\\>") == \
+        "'이 일기를 읽는 사람이 내 다음 생이라면, 잘 부탁해.'", \
+        "백슬래시 꺾쇠 → 작은따옴표 교체 실패"
+    
+    # ★ [v3.1.2] 메타 라벨 감지
+    assert _is_meta_label_line("첫 문장: 죽으면 끝인 줄 알았다."), "메타라벨 '첫 문장:' 감지 실패"
+    assert _is_meta_label_line("리캡 방식: 행동"), "메타라벨 '리캡 방식:' 감지 실패"
+    assert _is_meta_label_line("독자 질문: ..."), "메타라벨 '독자 질문:' 감지 실패"
+    assert _is_meta_label_line("클리프행어 유형: Reveal"), "메타라벨 '클리프행어 유형:' 감지 실패"
+    assert _is_meta_label_line("클리프행어 내용: ..."), "메타라벨 '클리프행어 내용:' 감지 실패"
+    assert _is_meta_label_line("다음 회차 연결: EP2: ..."), "메타라벨 '다음 회차 연결:' 감지 실패"
+    # 본문 중 메타 라벨 비슷한 문장은 false (라벨이 아니라 일반 문장)
+    assert not _is_meta_label_line("내가 첫 문장을 쓰자 그가 웃었다."), \
+        "본문 문장을 메타라벨로 오인식"
+    
+    # ★ [v3.1.2] 메타 블록 제거
+    text_with_meta = """본문 마지막 문장이다.
+그 다음 마지막 문장.
+
+첫 문장: 죽으면 끝인 줄 알았다.
+리캡 방식: 행동
+독자 질문: 이 몸은 누구의 것인가?
+클리프행어 유형: Reveal
+클리프행어 내용: 노트 표지 안쪽.
+다음 회차 연결: EP2: ..."""
+    cleaned = _strip_trailing_meta_block(text_with_meta)
+    assert "첫 문장:" not in cleaned, "메타 블록 제거 실패 (첫 문장:)"
+    assert "리캡 방식:" not in cleaned, "메타 블록 제거 실패 (리캡 방식:)"
+    assert "다음 회차 연결:" not in cleaned, "메타 블록 제거 실패 (다음 회차 연결:)"
+    assert "본문 마지막 문장이다." in cleaned, "본문이 잘려 나감"
+    assert "그 다음 마지막 문장." in cleaned, "본문 두 번째 줄이 잘려 나감"
+    
+    # 메타 블록 없는 본문은 그대로
+    pure_text = "본문 마지막 문장.\n그 다음 마지막 문장."
+    assert _strip_trailing_meta_block(pure_text) == pure_text, "메타 없는 본문이 변형됨"
     
     # ★ [v3.1] 메타정보 클리닝 검증
     from io import BytesIO
