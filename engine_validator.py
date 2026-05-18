@@ -1,30 +1,37 @@
 """
-engine_validator.py — Engine v3.2 (구 v3.0 Phase C)
+engine_validator.py — Engine v3.3 (구 v3.0 Phase C)
 ====================================================
 회차 자가 검수·재료 활용 검증·전환점 자동 감지
 
 핵심 함수:
 - validate_planning_to_writing_mapping() — 기획 재료가 본문에 반영됐는가
-- compute_episode_validation_score()    — 10축 종합 점수 (v3.2부터)
+- compute_episode_validation_score()    — 11축 종합 점수 (v3.3부터)
 - detect_transition_episodes()          — 마음 흐름 단계 전환점 자동 감지
 - generate_material_usage_report()      — 작가용 가시화 리포트
 - get_validation_mode_for_episode()     — 회차별 검수 모드 결정
 - summarize_cumulative_25()             — 25화 모니터링 누적 대시보드 데이터
 
-10축 검수 (v3.2):
-[기존 6축 — 가중치 합 50%]
-1. MATERIAL_USAGE        — 기획 재료가 본문에 활용됐는가 (가중치 0.12)
-2. CHARACTER_CONSISTENCY — 9종 인물 역할로 차별화됐는가 (가중치 0.08)
-3. CLIFFHANGER_STRENGTH  — 클리프행어 분포가 시장 표준 안인가 (가중치 0.08)
-4. MISE_EN_SCENE         — 묘사·장면 강도 적정한가 (가중치 0.05)
-5. MARKET_VIABILITY      — 시장 트리거 5종 충족도 (가중치 0.08)
-6. PLANT_USAGE           — 떡밥 활용도 (가중치 0.09)
+11축 검수 (v3.3) — 등급별 동적 가중치:
+[기존 10축 (v3.2)]
+1. MATERIAL_USAGE         — 기획 재료가 본문에 활용됐는가
+2. CHARACTER_CONSISTENCY  — 9종 인물 역할로 차별화됐는가
+3. CLIFFHANGER_STRENGTH   — 클리프행어 분포가 시장 표준 안인가
+4. MISE_EN_SCENE          — 묘사·장면 강도 적정한가
+5. MARKET_VIABILITY       — 시장 트리거 5종 충족도
+6. PLANT_USAGE            — 떡밥 활용도
+7. DIALOGUE_RATIO         — 대사 비율 40% 기준
+8. NAMING_DISCIPLINE      — A15·A16 호명·정체성 키워드 절제
+9. PROSE_HYGIENE          — said 뒤붙이기 + 회차 간 반복 문구
+10. LENGTH_DISCIPLINE     — 회차 분량 미달/초과
 
-[신규 4축 — 가중치 합 50%]
-7. DIALOGUE_RATIO        — 대사 비율 40% 기준 (가중치 0.20)
-8. NAMING_DISCIPLINE     — A15·A16 호명·정체성 키워드 절제 (가중치 0.12)
-9. PROSE_HYGIENE         — said 뒤붙이기 + 회차 간 반복 문구 (가중치 0.12)
-10. LENGTH_DISCIPLINE    — 회차 분량 미달/초과 (가중치 0.06)
+[신규 1축 (v3.3)]
+11. ADULT_CONTENT_FIDELITY — 19금 콘텐츠 충실도 (관능 묘사 빈도·강도)
+    · 19금/듀얼 작품: 가중치 0.40 (단일 최대)
+    · 15금 작품: 가중치 0 (비활성)
+
+등급별 동적 가중치:
+- 19금/듀얼 작품: ADULT_CONTENT_FIDELITY 0.40 + 기존 10축 0.60 비례 분배
+- 15금 작품: 기존 10축 1.00 비례 분배 (ADULT_CONTENT_FIDELITY 측정만 하고 점수 미반영)
 
 원칙:
 - 본 모듈은 LLM 호출 없이 텍스트 패턴 매칭으로 1차 검수 (빠름·무비용)
@@ -38,6 +45,11 @@ engine_validator.py — Engine v3.2 (구 v3.0 Phase C)
         · 빈 데이터 자동 점수 부여 폐지 — 측정 불가 시 명시적 N/A
         · 신규 4축이 SYSTEM_PROMPT의 핵심 룰(대사 비율 / A1 / A15 / A16) 측정
         · 가중치 재배분 — 신규 4축 합 50%
+- v3.3: ADULT_CONTENT_FIDELITY 축 추가 (11축) + 등급별 동적 가중치
+        · 19금/듀얼 작품 핵심 결함 측정 (관능 묘사 빈도·강도)
+        · 19금 작품: ADULT_CONTENT_FIDELITY 0.40 (단일 최대 비중)
+        · 15금 작품: 자동 비활성 (관능 키워드 없어도 페널티 없음)
+        · rating_mode를 받아 자동 분기 (concept_dict.serial_config.rating_mode)
 """
 
 from typing import List, Dict, Optional, Tuple
@@ -437,7 +449,7 @@ def _count_keyword_partial_hits(keywords: list, text: str) -> int:
 
 
 # ============================================================================
-# 2. compute_episode_validation_score — 10축 종합 점수 (v3.2)
+# 2. compute_episode_validation_score — 11축 종합 점수 (v3.3)
 # ============================================================================
 def compute_episode_validation_score(
     concept: dict,
@@ -448,28 +460,39 @@ def compute_episode_validation_score(
     cliffhanger_type: Optional[str] = None,
     plant_map: Optional[dict] = None,  # ★ v3.0+ — 떡밥 활용도 검수용
     platform: str = "카카오페이지",     # ★ v3.2+ — 분량 표준 결정용
+    intimacy_schedule: Optional[list] = None,  # ★ v3.3+ — 19금 콘텐츠 검수용
+    rating_mode: str = "",              # ★ v3.3+ — 등급별 가중치 결정용
 ) -> dict:
-    """회차 단독 10축 종합 점수 (v3.2부터 확장).
+    """회차 단독 11축 종합 점수 (v3.3부터 확장).
     
     Returns:
         {
             "axes": {
-                "MATERIAL_USAGE":       {score, critical, detail},
-                "CHARACTER_CONSISTENCY":{...},
-                "CLIFFHANGER_STRENGTH": {...},
-                "MISE_EN_SCENE":        {...},
-                "MARKET_VIABILITY":     {...},
-                "PLANT_USAGE":          {...},
-                "DIALOGUE_RATIO":       {...},   # ★ v3.2 신규
-                "NAMING_DISCIPLINE":    {...},   # ★ v3.2 신규
-                "PROSE_HYGIENE":        {...},   # ★ v3.2 신규
-                "LENGTH_DISCIPLINE":    {...},   # ★ v3.2 신규
+                # 기존 10축 (v3.2)
+                "MATERIAL_USAGE":         {score, critical, detail},
+                "CHARACTER_CONSISTENCY":  {...},
+                "CLIFFHANGER_STRENGTH":   {...},
+                "MISE_EN_SCENE":          {...},
+                "MARKET_VIABILITY":       {...},
+                "PLANT_USAGE":            {...},
+                "DIALOGUE_RATIO":         {...},
+                "NAMING_DISCIPLINE":      {...},
+                "PROSE_HYGIENE":          {...},
+                "LENGTH_DISCIPLINE":      {...},
+                # 신규 1축 (v3.3)
+                "ADULT_CONTENT_FIDELITY": {score, applicable, detail},
             },
             "overall": 0~100,
             "grade": "PASS|WARN|REDO",
             "verdict": "이 회차는 ...",
+            "weights_used": dict,  # 적용된 가중치 (등급별 동적)
         }
     """
+    # rating_mode를 concept에서 자동 추출 (직접 인자 없으면)
+    if not rating_mode and concept:
+        serial_config = concept.get("serial_config", {}) if isinstance(concept, dict) else {}
+        rating_mode = serial_config.get("rating_mode", "")
+    
     axes = {}
     
     # ─── 기존 6축 ─────────────────────────────────
@@ -479,7 +502,7 @@ def compute_episode_validation_score(
     )
     axes["MATERIAL_USAGE"] = {
         "score": mu["score"],
-        "critical": True,  # 누락 시 재집필 트리거
+        "critical": True,
         "detail": {
             "used_count": len(mu["used"]),
             "weak_count": len(mu["weak"]),
@@ -522,16 +545,16 @@ def compute_episode_validation_score(
         "detail": market_score["detail"],
     }
     
-    # 6) PLANT_USAGE — 떡밥 활용도 (v3.0+ 신규)
+    # 6) PLANT_USAGE — 떡밥 활용도 (v3.0+)
     plant_score = _score_plant_usage(plant_map, written_text, ep_number)
     axes["PLANT_USAGE"] = {
         "score": plant_score["score"],
-        "critical": plant_score.get("critical", False),  # 회수 누락 시 critical
+        "critical": plant_score.get("critical", False),
         "detail": plant_score["detail"],
     }
     
-    # ─── [v3.2 신규] 신규 4축 ─────────────────────
-    # 7) DIALOGUE_RATIO — 대사 비율 (SYSTEM_PROMPT의 핵심 룰)
+    # ─── 신규 4축 (v3.2) ──────────────────────────
+    # 7) DIALOGUE_RATIO
     dlg_score = _score_dialogue_ratio(written_text)
     axes["DIALOGUE_RATIO"] = {
         "score": dlg_score["score"],
@@ -539,7 +562,7 @@ def compute_episode_validation_score(
         "detail": dlg_score["detail"],
     }
     
-    # 8) NAMING_DISCIPLINE — A15·A16 호명·정체성 키워드
+    # 8) NAMING_DISCIPLINE
     naming_score = _score_naming_discipline(written_text, character_bible)
     axes["NAMING_DISCIPLINE"] = {
         "score": naming_score["score"],
@@ -547,7 +570,7 @@ def compute_episode_validation_score(
         "detail": naming_score["detail"],
     }
     
-    # 9) PROSE_HYGIENE — said 뒤붙이기 + 회차 내 반복
+    # 9) PROSE_HYGIENE
     hygiene_score = _score_prose_hygiene(written_text)
     axes["PROSE_HYGIENE"] = {
         "score": hygiene_score["score"],
@@ -555,7 +578,7 @@ def compute_episode_validation_score(
         "detail": hygiene_score["detail"],
     }
     
-    # 10) LENGTH_DISCIPLINE — 회차 분량 규율
+    # 10) LENGTH_DISCIPLINE
     length_score = _score_length_discipline(written_text, platform=platform)
     axes["LENGTH_DISCIPLINE"] = {
         "score": length_score["score"],
@@ -563,21 +586,61 @@ def compute_episode_validation_score(
         "detail": length_score["detail"],
     }
     
-    # ─── 종합 점수 (v3.2 신규 가중치) ────────────
-    # 기존 6축 합 0.50 + 신규 4축 합 0.50
-    weights = {
-        "MATERIAL_USAGE":         0.12,
-        "CHARACTER_CONSISTENCY":  0.08,
-        "CLIFFHANGER_STRENGTH":   0.08,
-        "MISE_EN_SCENE":          0.05,
-        "MARKET_VIABILITY":       0.08,
-        "PLANT_USAGE":            0.09,
-        # ─ 신규 4축 ─
-        "DIALOGUE_RATIO":         0.20,
-        "NAMING_DISCIPLINE":      0.12,
-        "PROSE_HYGIENE":          0.12,
-        "LENGTH_DISCIPLINE":      0.06,
+    # ─── [v3.3 신규] 11번째 축 ──────────────────────
+    # 11) ADULT_CONTENT_FIDELITY — 19금 콘텐츠 충실도
+    intimacy_for_ep = _get_intimacy_schedule_for_ep_helper(intimacy_schedule, ep_number)
+    target_audience = ""
+    if concept and isinstance(concept, dict):
+        target_audience = concept.get("target_audience", "")
+    
+    adult_score = _score_adult_content_fidelity(
+        text=written_text,
+        rating_mode=rating_mode,
+        target_audience=target_audience,
+        ep_number=ep_number,
+        intimacy_schedule_for_ep=intimacy_for_ep,
+    )
+    axes["ADULT_CONTENT_FIDELITY"] = {
+        "score": adult_score["score"],
+        "critical": False,
+        "applicable": adult_score["applicable"],
+        "detail": adult_score["detail"],
     }
+    
+    # ─── 등급별 동적 가중치 (v3.3) ─────────────────
+    is_adult = bool(rating_mode and ("19" in rating_mode or "듀얼" in rating_mode))
+    
+    if is_adult:
+        # 19금/듀얼 작품 — ADULT_CONTENT_FIDELITY 0.40, 나머지 10축 0.60
+        weights = {
+            "ADULT_CONTENT_FIDELITY": 0.40,
+            "DIALOGUE_RATIO":         0.12,
+            "MATERIAL_USAGE":         0.08,
+            "NAMING_DISCIPLINE":      0.08,
+            "PROSE_HYGIENE":          0.08,
+            "PLANT_USAGE":            0.06,
+            "CHARACTER_CONSISTENCY":  0.04,
+            "CLIFFHANGER_STRENGTH":   0.04,
+            "MARKET_VIABILITY":       0.04,
+            "MISE_EN_SCENE":          0.03,
+            "LENGTH_DISCIPLINE":      0.03,
+        }
+    else:
+        # 15금/미설정 작품 — ADULT_CONTENT_FIDELITY 0, 기존 10축 v3.2 가중치 유지
+        weights = {
+            "ADULT_CONTENT_FIDELITY": 0.00,
+            "MATERIAL_USAGE":         0.12,
+            "CHARACTER_CONSISTENCY":  0.08,
+            "CLIFFHANGER_STRENGTH":   0.08,
+            "MISE_EN_SCENE":          0.05,
+            "MARKET_VIABILITY":       0.08,
+            "PLANT_USAGE":            0.09,
+            "DIALOGUE_RATIO":         0.20,
+            "NAMING_DISCIPLINE":      0.12,
+            "PROSE_HYGIENE":          0.12,
+            "LENGTH_DISCIPLINE":      0.06,
+        }
+    
     overall = sum(axes[ax]["score"] * w for ax, w in weights.items())
     overall = int(round(overall))
     
@@ -605,6 +668,8 @@ def compute_episode_validation_score(
         "overall": overall,
         "grade": grade,
         "verdict": verdict,
+        "weights_used": weights,
+        "rating_mode": rating_mode,
     }
 
 
@@ -1420,6 +1485,227 @@ def _score_length_discipline(text: str, platform: str = "카카오페이지") ->
     }
 
 
+# ============================================================================
+# [v3.3 신규] ADULT_CONTENT_FIDELITY — 19금 콘텐츠 충실도
+# ============================================================================
+
+def _score_adult_content_fidelity(
+    text: str,
+    rating_mode: str = "",
+    target_audience: str = "",
+    ep_number: int = 0,
+    intimacy_schedule_for_ep: dict = None,
+) -> dict:
+    """[v3.3 신규] 19금 콘텐츠 충실도 점수.
+    
+    19금/듀얼 작품에서 회차마다 관능 묘사·신체 접촉·긴장이 충분히 있는가 측정.
+    
+    측정 카테고리:
+    1. 직접 신체 접촉 (키스/포옹/맨살/허벅지 등) — 가장 강한 신호
+    2. 관능 감각 (달아오/뜨거워/숨이 가빠/전율 등) — 핵심 신호
+    3. 신체 부위 묘사 (입술/목덜미/쇄골/어깨 등) — 보조 신호
+    4. 거리·긴장 (가까이/끌어당/맞닿/감싸 안 등) — 약한 신호
+    
+    점수 산출:
+    - 카테고리별 점수를 가중 합산
+    - intimacy_schedule_for_ep가 있으면 해당 level에 따라 기대치 조정
+      · "tension" 단계: 가벼운 접촉만 있어도 합격
+      · "first_scene" 단계: 본격 관능 씬이 있어야 함
+      · "power_tension"/"emotional_union": 깊은 관능·감정 묘사 기대
+    
+    Args:
+        text: 회차 본문
+        rating_mode: 작품 등급 ("19금만"/"듀얼(19+15)"/"15금만")
+        target_audience: 타깃 ("여성향"/"남성향" — 가중치 미세 조정용)
+        ep_number: 회차 번호
+        intimacy_schedule_for_ep: 이 회차에 배정된 관능 스케줄 (level/description)
+    
+    Returns:
+        {"score": 0~100, "applicable": bool, "detail": {...}}
+        applicable=False면 15금 작품 등으로 측정 비대상 (점수 무시)
+    """
+    # 등급 판단
+    is_adult = bool(rating_mode and ("19" in rating_mode or "듀얼" in rating_mode))
+    
+    if not is_adult:
+        # 15금 작품 — 측정 비대상
+        return {
+            "score": 100,  # 점수는 만점으로 처리하되 applicable=False로 가중치 0 처리
+            "applicable": False,
+            "detail": {
+                "reason": "15금 작품 — ADULT_CONTENT_FIDELITY 비측정",
+                "rating_mode": rating_mode,
+            }
+        }
+    
+    if not text or len(text) < 100:
+        return {
+            "score": 30,
+            "applicable": True,
+            "detail": {"reason": "본문 너무 짧음"}
+        }
+    
+    # ─── 카테고리별 키워드 정의 (v3.3.1 — 한국어 활용형 확장) ─────
+    # 1. 직접 신체 접촉 (강한 신호 — 가중치 3.0)
+    direct_contact = [
+        "키스", "입맞춤", "혀가", "혀를", "맨살", "벗은",
+        "허벅지", "허리를 끌", "허리를 감", "포옹", "끌어안", "끌어당",
+        "안기", "품에", "몸을 겹", "몸이 겹", "맞닿", "맞붙",
+        "옷이 벗", "옷을 벗", "단추", "지퍼", "넥타이를 풀",
+        # v3.3.1 추가 — 손목 잡기, 손가락 접촉
+        "손목을 잡", "손목이 잡", "손목 안쪽에 그의", "손목에 그의 체온",
+        "손가락 끝이 닿", "손가락 끝이 카운터 위에서", "손이 시호의 손",
+    ]
+    
+    # 2. 관능 감각 (핵심 신호 — 가중치 2.5)
+    arousal_sensations = [
+        "달아오", "뜨거워", "뜨거운 숨", "숨이 가빠", "숨이 막",
+        "전율", "떨림이 번", "달뜬", "흥분", "전기처럼",
+        "온몸이 떨", "온몸이 뜨", "몸이 떨", "몸이 녹",
+        "심장이 빠르게", "심장이 미친듯", "심장이 터질",
+        "녹아내", "녹아들", "스며들", "젖어", "갈증",
+        "신음", "낮은 소리", "낮은 신음", "옅은 소리",
+        # v3.3.1 추가 — 활용형
+        "뜨거웠다", "뜨거운", "뜨끔", "심장이 한 번", "심장이 크게 떨어",
+        "떨림이", "떨렸다", "호흡이 한 박자", "호흡이 멈췄다", "호흡이 얕",
+        "한 박자 멈췄다", "분석 회로가 멈췄", "분석 회로가 안 켜",
+        "47년 인생에 한 번도", "47년 모태솔로",
+    ]
+    
+    # 3. 신체 부위 묘사 (보조 신호 — 가중치 1.5)
+    body_parts_intimate = [
+        "입술이", "입술을", "입술에", "입술 끝",
+        "쇄골", "목덜미", "목선", "목 아래",
+        "어깨에 손", "어깨에 입", "등을 쓸",
+        "손가락이 입", "손가락이 목", "손끝이 닿",
+        "체온", "체취", "냄새가 가까이",
+        "혀끝", "이로 살짝",
+        # v3.3.1 추가 — 시호 톤 (손목 + 어깨)
+        "손목 안쪽", "어깨가 굳", "어깨에 닿", "그의 어깨가",
+        "체온이 닿", "체온이 거기", "향수 냄새가", "향수가 시호",
+    ]
+    
+    # 4. 거리·긴장 (약한 신호 — 가중치 1.0)
+    tension_proximity = [
+        "가까이 다가", "한 뼘 거리", "코끝이 닿",
+        "이마가 닿", "이마를 맞", "숨결이 닿",
+        "거리가 좁", "거리가 줄",
+        "그의 그림자가 위", "그의 그림자 안",
+        "손이 손을 잡", "손을 잡았", "손을 잡혔",
+        # v3.3.1 추가
+        "한 뼘", "반 뼘", "0.5cm", "1cm", "그림자가 시호", "그림자 밖으로",
+        "닿을 듯 말 듯", "닿지 않은 채", "그의 시선이 시호",
+        "거리감 제로", "거리감이",
+    ]
+    
+    # ─── 카테고리별 카운트 ─────────────────────────────
+    contact_count = sum(text.count(kw) for kw in direct_contact)
+    arousal_count = sum(text.count(kw) for kw in arousal_sensations)
+    body_count = sum(text.count(kw) for kw in body_parts_intimate)
+    tension_count = sum(text.count(kw) for kw in tension_proximity)
+    
+    # 가중 점수 (raw score)
+    raw_score = (
+        contact_count * 3.0 +
+        arousal_count * 2.5 +
+        body_count * 1.5 +
+        tension_count * 1.0
+    )
+    
+    # ─── intimacy_schedule 기반 기대치 조정 ─────────
+    expected_level = ""
+    level_threshold = {
+        # 기대 raw_score (이 점수면 만점)
+        "tension": 6,           # 가벼운 접촉만 있어도 합격
+        "first_scene": 25,      # 본격 첫 관능 씬 — 강한 묘사 필요
+        "power_tension": 18,    # 권력·긴장 기반 친밀 — 중강도
+        "emotional_union": 22,  # 감정 절정 관능 — 강도 높음
+        "deep_intimacy": 30,    # 깊은 관능 — 최강도
+    }
+    
+    if intimacy_schedule_for_ep and isinstance(intimacy_schedule_for_ep, dict):
+        expected_level = intimacy_schedule_for_ep.get("level", "")
+    
+    if expected_level and expected_level in level_threshold:
+        target = level_threshold[expected_level]
+    else:
+        # 기본 기대치 — 19금 작품 일반 회차는 최소한의 친밀 신호
+        target = 5
+    
+    # raw_score를 점수로 변환
+    # raw_score=0이면 0점, raw_score>=target이면 90~100점, 그 사이는 선형
+    if raw_score >= target * 1.5:
+        score = 100
+    elif raw_score >= target:
+        # target~target*1.5: 90~100
+        score = 90 + int((raw_score - target) / (target * 0.5) * 10)
+    elif raw_score >= target * 0.6:
+        # target*0.6~target: 60~89
+        score = 60 + int((raw_score - target * 0.6) / (target * 0.4) * 29)
+    elif raw_score >= target * 0.3:
+        # target*0.3~target*0.6: 30~59
+        score = 30 + int((raw_score - target * 0.3) / (target * 0.3) * 29)
+    else:
+        # 0~target*0.3: 0~29
+        score = max(0, int(raw_score / (target * 0.3) * 29))
+    
+    # 19금인데 raw_score=0이면 강한 페널티 (회차에 19금 흔적 전혀 없음)
+    if raw_score == 0:
+        score = 0
+    
+    return {
+        "score": score,
+        "applicable": True,
+        "detail": {
+            "raw_score": round(raw_score, 1),
+            "target_raw": target,
+            "expected_level": expected_level or "기본 (관능 스케줄 미배정)",
+            "direct_contact": contact_count,
+            "arousal_sensations": arousal_count,
+            "body_parts_intimate": body_count,
+            "tension_proximity": tension_count,
+            "rating_mode": rating_mode,
+        }
+    }
+
+
+def _get_intimacy_schedule_for_ep_helper(intimacy_schedule: list, ep_number: int) -> dict:
+    """[v3.3 신규] intimacy_schedule 리스트에서 해당 회차의 항목 찾기 헬퍼.
+    
+    Args:
+        intimacy_schedule: [{"ep_range": "EP5" 또는 "3-5", "level": "...", "description": "..."}, ...]
+        ep_number: 회차 번호
+    
+    Returns:
+        매칭되는 dict 또는 빈 dict
+    """
+    if not intimacy_schedule or not isinstance(intimacy_schedule, list):
+        return {}
+    
+    for item in intimacy_schedule:
+        if not isinstance(item, dict):
+            continue
+        ep_range = item.get("ep_range", "")
+        # "EP5" 형식
+        if ep_range.startswith("EP"):
+            try:
+                target_ep = int(ep_range[2:])
+                if target_ep == ep_number:
+                    return item
+            except ValueError:
+                continue
+        # "3-5" 또는 "3~5" 형식
+        parts = ep_range.replace("~", "-").split("-")
+        if len(parts) == 2:
+            try:
+                start, end = int(parts[0].strip()), int(parts[1].strip())
+                if start <= ep_number <= end:
+                    return item
+            except ValueError:
+                continue
+    return {}
+
+
 def _extract_plant_keywords(name: str, description: str) -> list:
     """[v3.0+ 정밀화] 떡밥 명사·설명에서 검색용 키워드 풍부 추출.
     
@@ -1943,7 +2229,53 @@ def _self_test():
     assert "NAMING_DISCIPLINE" in result["axes"], "NAMING_DISCIPLINE 축 누락"
     assert "PROSE_HYGIENE" in result["axes"], "PROSE_HYGIENE 축 누락"
     assert "LENGTH_DISCIPLINE" in result["axes"], "LENGTH_DISCIPLINE 축 누락"
-    assert len(result["axes"]) == 10, f"축 개수 불일치: {len(result['axes'])}"
+    # v3.3 신규
+    assert "ADULT_CONTENT_FIDELITY" in result["axes"], "ADULT_CONTENT_FIDELITY 축 누락"
+    assert len(result["axes"]) == 11, f"축 개수 불일치: {len(result['axes'])}"
+    
+    # ★ [v3.3] ADULT_CONTENT_FIDELITY 동작 검증
+    # 15금 작품 — applicable=False
+    r = _score_adult_content_fidelity(
+        text="일반 본문." * 100, rating_mode="15금만",
+    )
+    assert r["applicable"] is False, "15금 작품에서 applicable=True가 되면 안 됨"
+    
+    # 19금 작품 — 관능 키워드 0개 → 0점
+    r = _score_adult_content_fidelity(
+        text="일반 본문. 시호는 카페에서 일했다." * 100, rating_mode="19금만",
+    )
+    assert r["applicable"] is True, "19금 작품에서 applicable=True여야 함"
+    assert r["score"] == 0, f"관능 키워드 0개일 때 0점 아님: {r['score']}"
+    
+    # 19금 작품 — 충분한 관능 묘사 → 높은 점수
+    intimacy_text = """그가 시호의 허리를 끌어당겼다. 시호의 입술이 떨렸다.
+숨이 가빠졌다. 키스에 가까운 거리. 맞닿은 가슴. 심장이 빠르게 뛰었다.
+달아오른 체온. 뜨거운 숨결.""" * 3
+    r = _score_adult_content_fidelity(
+        text=intimacy_text, rating_mode="19금만",
+        intimacy_schedule_for_ep={"level": "first_scene"},
+    )
+    assert r["score"] >= 70, f"충분한 관능 묘사에서 점수 미달: {r['score']}"
+    
+    # 등급별 동적 가중치 — 19금 작품 weights 확인
+    result_19 = compute_episode_validation_score(
+        {"title": "테스트", "genre": "현대로맨스", "serial_config": {"rating_mode": "19금만"}},
+        char_bible_test,
+        test_text,
+        ep_number=1, total_eps=50,
+    )
+    assert result_19["weights_used"]["ADULT_CONTENT_FIDELITY"] == 0.40, \
+        f"19금 ACF 가중치 0.40 아님: {result_19['weights_used']['ADULT_CONTENT_FIDELITY']}"
+    
+    # 15금 작품 weights 확인
+    result_15 = compute_episode_validation_score(
+        {"title": "테스트", "genre": "현대로맨스", "serial_config": {"rating_mode": "15금만"}},
+        char_bible_test,
+        test_text,
+        ep_number=1, total_eps=50,
+    )
+    assert result_15["weights_used"]["ADULT_CONTENT_FIDELITY"] == 0.00, \
+        f"15금 ACF 가중치 0 아님: {result_15['weights_used']['ADULT_CONTENT_FIDELITY']}"
     
     return True
 

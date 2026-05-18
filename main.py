@@ -35,9 +35,6 @@ from prompt import (
     build_validation_prompt, build_episode_redo_prompt,
     # v3.0 Phase D — 기획서 자동 변환
     build_brief_to_seed_prompt, build_brief_episode_extraction_prompt,
-    # v3.2 — STEP 3-5 대사 환원 제안
-    build_dialogue_conversion_suggest_prompt,
-    build_character_full_block,
 )
 from profession_pack import (
     PROFESSION_PACK, PROFESSION_KEYWORDS,
@@ -2734,8 +2731,7 @@ with main_tabs[2]:
             "3-2 15금 변환",
             "3-3 품질 체크",
             "🔍 3-4 독자 시뮬레이터",
-            "💬 3-5 대사 환원 제안",
-            "3-6 내보내기",
+            "3-5 내보내기",
         ])
 
         # 전체 에피소드 리스트 (Core + Extension)
@@ -3276,14 +3272,14 @@ with main_tabs[2]:
                                 for i, imp in enumerate(improvements, 1):
                                     st.markdown(f"{i}. {imp}")
 
-                # ─── v3.2 Phase C — 자가 검수 (10축 종합) ──────
+                # ─── v3.0 Phase C — 자가 검수 (5축 + 재료 활용) ──────
                 if _V3_VALIDATOR_AVAILABLE:
                     st.divider()
-                    st.markdown("### ⚙️ v3.2 자가 검수 — 10축 종합")
+                    st.markdown("### ⚙️ v3.0 자가 검수 — 재료 활용 + 5축 종합")
                     st.caption(
-                        "10축 검수: 기획 재료 활용 6축(기존) + 산문 위생 4축(v3.2 신규). "
-                        "v3.2 신규 4축 — 대사 비율(40%↑) / 호명·정체성 절제 / "
-                        "산문 위생(A1·반복) / 회차 분량 — 이 SYSTEM_PROMPT의 핵심 룰을 측정합니다."
+                        "기획에서 정한 v3.0 재료(포뮬러·모티프·9종 인물 역할·마음 흐름·시장 트리거)가 "
+                        "본문에 실제로 작동했는지 검수합니다. "
+                        "기존 품질 검사가 '본문 품질'을 본다면, 자가 검수는 'v3.0 사양 충족도'를 봅니다."
                     )
 
                     # 검수 모드 설정
@@ -3338,7 +3334,7 @@ with main_tabs[2]:
                     
                     # 자가 검수 실행 버튼
                     if st.button(
-                        f"⚙️ EP{ep_check} 자가 검수 실행 (10축 종합)",
+                        f"⚙️ EP{ep_check} 자가 검수 실행 (5축 종합)",
                         type="primary",
                         key="run_v3_validation_btn",
                     ):
@@ -3352,16 +3348,23 @@ with main_tabs[2]:
                             chars_data = st.session_state.character_bible or {}
                             # ★ v3.0+ PLANT_USAGE 검수용 떡밥 맵
                             plant_map_for_val = st.session_state.plant_map_core or None
+                            # ★ v3.3+ ADULT_CONTENT_FIDELITY 검수용
+                            intimacy_for_val = st.session_state.get("intimacy_schedule", []) or concept.get("intimacy_schedule", [])
+                            rating_mode_for_val = concept.get("serial_config", {}).get("rating_mode", "")
+                            # 19금 트랙 검수 시에만 ADULT_CONTENT_FIDELITY 측정 의미
+                            # (15금 트랙은 가중치 0으로 자동 처리)
                             
                             # 1차: 패턴 매칭 검수 (빠름·무비용)
-                            with st.spinner("1차 패턴 매칭 검수 중... (10축 — v3.2 신규 4축 포함)"):
+                            with st.spinner(f"1차 패턴 매칭 검수 중... (11축 v3.3 — 19금 충실도 포함, {check_rating} 트랙)"):
                                 rule_result = compute_episode_validation_score(
                                     concept=concept,
                                     character_bible=chars_data,
                                     written_text=text,
                                     ep_number=ep_check,
                                     total_eps=total_eps_for_t,
-                                    plant_map=plant_map_for_val,  # ★ 떡밥 맵 전달
+                                    plant_map=plant_map_for_val,
+                                    intimacy_schedule=intimacy_for_val,        # ★ v3.3
+                                    rating_mode=rating_mode_for_val if check_rating == "19금" else "15금만",  # ★ v3.3 트랙별 분기
                                 )
                             
                             # 결과 저장
@@ -3425,8 +3428,8 @@ with main_tabs[2]:
                                 w = weakest[0]
                                 st.metric("최저 회차", f"EP{w['ep']} ({w['overall']})")
                         
-                        # 10축 평균 (v3.2)
-                        st.markdown("**10축 누적 평균**")
+                        # 5축 평균
+                        st.markdown("**11축 누적 평균** (v3.3+)")
                         axis_labels = {
                             "MATERIAL_USAGE": "재료 활용",
                             "CHARACTER_CONSISTENCY": "캐릭터 차별화",
@@ -3434,11 +3437,11 @@ with main_tabs[2]:
                             "MISE_EN_SCENE": "묘사·장면",
                             "MARKET_VIABILITY": "시장 트리거",
                             "PLANT_USAGE": "떡밥 활용",
-                            # v3.2 신규 4축
-                            "DIALOGUE_RATIO": "대사 비율 (40%↑)",
+                            "DIALOGUE_RATIO": "대사 비율",
                             "NAMING_DISCIPLINE": "호명·정체성 절제 (A15·A16)",
-                            "PROSE_HYGIENE": "산문 위생 (A1·반복)",
-                            "LENGTH_DISCIPLINE": "회차 분량",
+                            "PROSE_HYGIENE": "지문 위생 (A1·반복)",
+                            "LENGTH_DISCIPLINE": "분량 규율",
+                            "ADULT_CONTENT_FIDELITY": "19금 콘텐츠 충실도",
                         }
                         for ax, score in summary.get("axis_avgs", {}).items():
                             label = axis_labels.get(ax, ax)
@@ -3616,203 +3619,8 @@ with main_tabs[2]:
 
                         st.divider()
 
-        # ── 3-5 대사 환원 제안 (v3.2 신규) ──
+        # ── 3-5 내보내기 ──
         with sub_tabs_3[4]:
-            sub_header("대사 환원 제안")
-            st.caption(
-                "지문으로 풀린 단락 중 '대사로 환원하면 살아날' 후보를 LLM이 자동으로 찾아 대안을 제시합니다. "
-                "본문은 절대 자동 수정되지 않습니다. 작가가 마음에 드는 제안만 골라 직접 본문에 옮기세요."
-            )
-            st.info(
-                "🛡️ 보호 가드: 도입 첫 문장 / 회차 마지막 단락 / 시호의 내적 독백 / 시그니처 대사는 "
-                "후보에서 자동 제외됩니다."
-            )
-            
-            eps_19_d5 = st.session_state.episodes_19
-            eps_15_d5 = st.session_state.episodes_15
-            
-            if not eps_19_d5 and not eps_15_d5:
-                st.info("집필된 회차가 없습니다. STEP 3-1에서 먼저 집필하세요.")
-            else:
-                # ── 등급 + 회차 선택 ──
-                col_d5_1, col_d5_2 = st.columns([1, 2])
-                with col_d5_1:
-                    if eps_19_d5 and eps_15_d5:
-                        d5_rating = st.radio(
-                            "등급",
-                            ["19금", "15금"],
-                            horizontal=True,
-                            key="dialogue_suggest_rating",
-                        )
-                    elif eps_19_d5:
-                        d5_rating = "19금"
-                        st.markdown("**등급:** 19금 (15금 없음)")
-                    else:
-                        d5_rating = "15금"
-                        st.markdown("**등급:** 15금 (19금 없음)")
-                
-                source_eps = eps_19_d5 if d5_rating == "19금" else eps_15_d5
-                ep_keys_int_d5 = sorted([
-                    int(k) if isinstance(k, str) and k.isdigit() else k
-                    for k in source_eps.keys()
-                ])
-                
-                with col_d5_2:
-                    ep_select_d5 = st.selectbox(
-                        f"회차 선택 (총 {len(ep_keys_int_d5)}회차)",
-                        ep_keys_int_d5,
-                        format_func=lambda x: f"EP{x}",
-                        key="dialogue_suggest_ep",
-                    )
-                
-                # ── 제안 개수 슬라이더 ──
-                col_d5_3, col_d5_4 = st.columns([1, 2])
-                with col_d5_3:
-                    suggest_count = st.number_input(
-                        "제안 개수",
-                        min_value=3,
-                        max_value=20,
-                        value=10,
-                        step=1,
-                        key="dialogue_suggest_count",
-                        help="회차당 몇 개의 대안을 제시할지. 기본 10개.",
-                    )
-                
-                with col_d5_4:
-                    st.caption(
-                        "💡 본문에 후보 단락이 부족하면 LLM이 가능한 만큼만 응답합니다."
-                    )
-                
-                # ── 실행 버튼 ──
-                run_btn = st.button(
-                    f"💬 EP{ep_select_d5} 대사 환원 제안 생성",
-                    type="primary",
-                    key="run_dialogue_suggest",
-                )
-                
-                if run_btn:
-                    # 회차 본문 추출 (정수 키/문자열 키 모두 대응)
-                    ep_text_d5 = source_eps.get(ep_select_d5) or source_eps.get(str(ep_select_d5), "")
-                    if not ep_text_d5 or not ep_text_d5.strip():
-                        st.warning(f"EP{ep_select_d5} {d5_rating} 본문이 비어 있습니다.")
-                    else:
-                        # 캐릭터 바이블 텍스트 블록 (있으면)
-                        try:
-                            char_block_d5 = build_character_full_block(
-                                st.session_state.character_bible or {}
-                            )
-                        except Exception:
-                            char_block_d5 = ""
-                        
-                        genre_d5 = concept.get("genre", "")
-                        
-                        prompt_d5 = build_dialogue_conversion_suggest_prompt(
-                            episode_text=ep_text_d5,
-                            episode_number=ep_select_d5,
-                            characters=char_block_d5,
-                            genre=genre_d5,
-                            suggest_count=int(suggest_count),
-                        )
-                        
-                        with st.spinner(f"EP{ep_select_d5} 분석 중... (제안 {suggest_count}개 생성)"):
-                            response = call_claude(
-                                prompt_d5,
-                                system=build_system_prompt(),
-                                max_tokens=8000,
-                                model=MODEL_OPUS,  # Opus — 정밀 분석
-                            )
-                        
-                        if not response:
-                            st.error("LLM 응답 실패. 다시 시도하세요.")
-                        else:
-                            # JSON 파싱
-                            try:
-                                # 마크다운 코드블록 제거 (혹시 LLM이 ```json ... ``` 출력 시)
-                                clean_resp = response.strip()
-                                if clean_resp.startswith("```"):
-                                    lines_resp = clean_resp.split("\n")
-                                    clean_resp = "\n".join(lines_resp[1:-1]) if len(lines_resp) > 2 else clean_resp
-                                if clean_resp.startswith("json"):
-                                    clean_resp = clean_resp[4:].strip()
-                                
-                                # 첫 { 부터 마지막 } 까지만 추출
-                                start_idx = clean_resp.find("{")
-                                end_idx = clean_resp.rfind("}")
-                                if start_idx >= 0 and end_idx > start_idx:
-                                    clean_resp = clean_resp[start_idx:end_idx + 1]
-                                
-                                d5_data = json.loads(clean_resp)
-                            except Exception as e:
-                                st.error(f"JSON 파싱 실패: {e}")
-                                with st.expander("LLM 원본 응답 (디버깅용)"):
-                                    st.code(response, language="text")
-                                d5_data = None
-                            
-                            if d5_data:
-                                st.session_state[f"d5_result_ep{ep_select_d5}_{d5_rating}"] = d5_data
-                                st.success(f"✅ EP{ep_select_d5} 분석 완료")
-                                st.rerun()
-                
-                # ── 저장된 결과 표시 ──
-                cached_key = f"d5_result_ep{ep_select_d5}_{d5_rating}"
-                cached = st.session_state.get(cached_key)
-                
-                if cached:
-                    st.divider()
-                    suggestions = cached.get("suggestions", [])
-                    
-                    # 상단 요약
-                    col_sum1, col_sum2 = st.columns([2, 1])
-                    with col_sum1:
-                        summary_text = cached.get("summary", "")
-                        if summary_text:
-                            st.info(f"📋 **요약:** {summary_text}")
-                    with col_sum2:
-                        st.metric("제안 수", f"{len(suggestions)}개")
-                    
-                    # 보호 영역 안내
-                    skipped = cached.get("skipped_zones", [])
-                    if skipped:
-                        with st.expander("🛡️ 보호한 영역 (LLM이 건드리지 않은 곳)"):
-                            for sk in skipped:
-                                st.markdown(f"- {sk}")
-                    
-                    st.markdown(f"### EP{ep_select_d5} 대사 환원 후보 {len(suggestions)}개")
-                    
-                    # 위험도별 정렬: low → medium → high
-                    risk_order = {"low": 0, "medium": 1, "high": 2}
-                    sorted_sug = sorted(
-                        suggestions,
-                        key=lambda s: risk_order.get(s.get("risk", "medium"), 1)
-                    )
-                    
-                    for sg in sorted_sug:
-                        risk = sg.get("risk", "medium")
-                        risk_emoji = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(risk, "🟡")
-                        speaker = sg.get("speaker", "")
-                        location = sg.get("location", "")
-                        
-                        with st.expander(
-                            f"{risk_emoji} #{sg.get('id', '?')} · {location} · 발화자: {speaker}",
-                            expanded=False,
-                        ):
-                            st.markdown("**원본 (지문):**")
-                            st.markdown(
-                                f"> {sg.get('original', '(없음)')}"
-                            )
-                            st.markdown("**제안 (대사 환원):**")
-                            # 코드블록으로 표시 — 복사하기 쉽게
-                            st.code(sg.get("suggestion", "(없음)"), language="text")
-                            st.caption(f"💡 이유: {sg.get('reason', '')}")
-                    
-                    # 결과 초기화 버튼
-                    st.divider()
-                    if st.button("🗑️ 이 회차 결과 지우기", key=f"clear_{cached_key}"):
-                        del st.session_state[cached_key]
-                        st.rerun()
-        
-        # ── 3-6 내보내기 (구 3-5에서 이동) ──
-        with sub_tabs_3[5]:
             sub_header("내보내기")
 
             eps_19 = st.session_state.episodes_19
