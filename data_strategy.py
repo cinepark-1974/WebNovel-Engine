@@ -1,23 +1,34 @@
 """
-data_strategy.py — Engine v3.0
+data_strategy.py — Engine v3.4
 ================================
 창작 전략·문체·세계 구축 데이터셋
 
-수록 데이터:
+수록 데이터 (v3.0):
 - ROFAN_CREATION_STRATEGY — 로판 3종 세부장르별 창작 전략
 - HETEROTOPIA_FRAME — 헤테로토피아(낭만적 이세계) 구축 사양
 - POV_BLENDING_GUIDE — 시점 혼용 가이드 (비개성적 문체)
 - READER_DESIRES_ROFAN — 로판 3대 독자 욕망 (보조 가이드)
 
+신규 데이터 (v3.4):
+- FIRST_SCENE_TYPES_9 — 첫 장면 9가지 유형 (백종인 2022 [표 13/14])
+- MEDIA_CONVERSION_RATIO — 매체 전환 비율 (웹툰 5화 = 드라마 1편)
+
 원칙:
 - 작품 콘셉트의 sub_genre 필드에 따라 자동 적용 가능
 - 4명의 전남편들에는 "치유물 전략 + 헤테로토피아(빙의 후 카페 공간)" 부분 적용
 - POV 혼용 가이드는 모든 작품에 공통 적용 (웹소설 비개성적 문체)
+- 첫 장면 9유형: EP1 빌더에 강제 선택지로 주입
+- 매체 전환 비율: 작품이 OTT 시리즈 전환을 염두에 둘 경우 활용
+
+학술 출처 (v3.4 추가분):
+- 백종인 (2022), 공주대 만화학과 석사학위논문
+  "드라마화된 로맨스 웹툰의 서사와 플롯에 관한 연구"
+- 방현석 (2013), "서사패턴 959 (이야기를 완성하는)"
 
 사용 예시:
-    from data_strategy import ROFAN_CREATION_STRATEGY, HETEROTOPIA_FRAME
+    from data_strategy import ROFAN_CREATION_STRATEGY, FIRST_SCENE_TYPES_9
     strategy = ROFAN_CREATION_STRATEGY["치유물"]
-    diagram = strategy["story_logic"]
+    scene_types = list(FIRST_SCENE_TYPES_9.keys())
 """
 
 
@@ -309,6 +320,194 @@ def is_4husbands_applicable_strategy(strategy_name: str) -> bool:
 
 
 # ============================================================================
+# FIRST_SCENE_TYPES_9 — 첫 장면 9가지 유형 (v3.4 신규)
+# ============================================================================
+# 출처: 백종인 (2022) [표 13/14], 방현석 (2013) 《서사패턴 959》
+# 용도: EP1 빌더에서 작가가 첫 장면 유형을 명시적으로 선택하여 도입부 흡인력 강화
+# 강제 주입: EP1 집필 프롬프트에 선택된 유형의 정의·디바이스가 자동 주입됨
+
+FIRST_SCENE_TYPES_9 = {
+    # ─── 독자를 마중하는 5유형 (현재 → 픽션) ──────────────────────
+    "인물제시형": {
+        "category": "독자를_마중",
+        "definition": "인물의 성격을 단적으로 알 수 있는 장면을 보여주며, 앞으로 벌어질 사건을 짐작하게 하고 사건의 전개에 개연성을 부여",
+        "key_devices": [
+            "인물의 특징적 습관·말투·외모를 한 장면에 응축",
+            "그 인물이 처한 상황 한 컷",
+            "독자가 '이 인물이 누구인지' 즉시 파악 가능",
+        ],
+        "example": "내 ID는 강남미인 — 강미래가 과거 못생긴 외모로 거절당하던 장면부터 시작",
+        "best_for_genre": ["현대로맨스", "치정로맨스", "로판"],
+        "best_for_4husbands": True,  # 환생 정체성 작품 — 시호 47년 직장인 어법 도입 적합
+    },
+    "사건발생형": {
+        "category": "독자를_유혹",
+        "definition": "갑작스럽게 발생한 사건을 먼저 제시. 독자는 사건에 매혹되어 자연스럽게 다음 페이지로 시선을 옮김",
+        "key_devices": [
+            "1단락 안에 사건 발생",
+            "독자가 '무슨 일이지?' 즉시 의문",
+            "사건의 발단·전개·중단이 명확",
+        ],
+        "example": "김비서가 왜 그럴까 — 김비서가 그만둔다는 사건이 발생하고 이영준의 심리부터 시작",
+        "best_for_genre": ["스릴러", "현대로맨스", "치정로맨스"],
+    },
+    "일상제시형": {
+        "category": "독자를_마중",
+        "definition": "인물이 어떤 사건에 던져지기 전의 모습을 객관적인 시선으로 묘사",
+        "key_devices": [
+            "평범한 일상의 한 컷",
+            "그 일상에 작은 균열을 예고하는 디테일",
+            "독자가 인물의 평소 모습에 공감",
+        ],
+        "example": "저녁 같이 드실래요 — 사건 일어나기 전 도희의 일상에서 시작",
+        "best_for_genre": ["현대로맨스", "일상물"],
+    },
+    "배경제시형": {
+        "category": "독자를_마중",
+        "definition": "사건이 벌어질 시공간에 대한 설명과 묘사",
+        "key_devices": [
+            "압도적 배경 스케일",
+            "세계관의 규모를 한 단락에 응축",
+            "독자가 '이 세계로 들어가고 싶다'고 느낌",
+        ],
+        "example": "판타지·무협에서 주로 — 과거 이런저런 인물이 세상을 지배했다는 식의 도입",
+        "best_for_genre": ["판타지", "무협", "사극"],
+    },
+    "회상형": {
+        "category": "독자를_마중",
+        "definition": "지나간 일들에 대한 회상으로 시작",
+        "key_devices": [
+            "과거의 결정적 사건을 먼저 보여줌",
+            "그 사건이 현재의 인물을 만들었다는 암시",
+            "독자가 '왜 그렇게 됐는지' 알고 싶어함",
+        ],
+        "example": "내 ID는 강남미인 — 강미래의 과거 회상으로 도입",
+        "best_for_genre": ["현대로맨스", "사극", "치정로맨스"],
+    },
+    "전체압축형": {
+        "category": "독자를_마중",
+        "definition": "서사 전체의 문제의식을 아우르는 질문을 독자에게 던지거나 은유하는 형식",
+        "key_devices": [
+            "프롤로그 형식의 압축",
+            "전체 서사를 1~2단락에 응축",
+            "본편 시작 전 '예고편'",
+        ],
+        "example": "치즈 인 더 트랩 — 홍설이 복학하는 과정과 유정과의 관계 예고편",
+        "best_for_genre": ["현대로맨스", "스릴러", "치정로맨스"],
+    },
+    # ─── 독자를 유혹하는 4유형 (사건/행동 중심) ──────────────────
+    "행동형": {
+        "category": "독자를_유혹",
+        "definition": "인물의 습관적 행위에 집중. 반복성을 띠며 의미와 상징성을 가짐",
+        "key_devices": [
+            "인물의 특징적 행동을 반복적으로 보여줌",
+            "그 행동이 그 인물의 본질을 표현",
+            "독자에게 모방 욕구까지 불러일으킴",
+        ],
+        "example": "슬램덩크 — 강백호의 박치기 습관과 빨간머리·큰 덩치가 한 장면에 응축",
+        "best_for_genre": ["액션", "스포츠", "현대로맨스"],
+    },
+    "대비상징형": {
+        "category": "독자를_유혹",
+        "definition": "인물간의 극명한 대비를 통해서 필연적인 갈등을 암시",
+        "key_devices": [
+            "두 인물 또는 두 상황의 강한 대비",
+            "그 대비가 사건의 동력이 될 것임을 암시",
+            "독자가 '둘이 어떻게 부딪칠지' 궁금해함",
+        ],
+        "example": "겟백 — 천재 다정과 그런 천재가 부러웠던 언니 은정의 대비",
+        "best_for_genre": ["현대로맨스", "성장물", "스포츠"],
+    },
+    "의문유발형": {
+        "category": "독자를_유혹",
+        "definition": "첫 장면에서 독자에게 궁금증을 유발. 비일상적 사건이나 자연법칙과 동떨어진 비현실적 상황 제시",
+        "key_devices": [
+            "이해할 수 없는 사건·상황 제시",
+            "독자가 '이게 뭐지?' 즉시 의문",
+            "수수께끼 해결 욕구가 다음 페이지로 견인",
+        ],
+        "example": "어느날 갑자기 서울은 — 산책 중 발견한 개구리 알 같은 것을 만지면서 사건 발생",
+        "best_for_genre": ["판타지", "SF", "스릴러", "환생"],
+        "best_for_4husbands": True,  # 환생/빙의 작품 도입에 적합
+    },
+}
+
+
+def get_first_scene_type(type_name: str) -> dict:
+    """첫 장면 유형 정의 반환."""
+    return FIRST_SCENE_TYPES_9.get(type_name, {})
+
+
+def get_first_scene_types_for_genre(genre: str) -> list:
+    """장르에 맞는 첫 장면 유형 목록 반환."""
+    return [
+        k for k, v in FIRST_SCENE_TYPES_9.items()
+        if genre in v.get("best_for_genre", [])
+    ]
+
+
+def get_first_scene_types_for_4husbands() -> list:
+    """4명의 전남편들에 적합한 첫 장면 유형 목록 반환."""
+    return [
+        k for k, v in FIRST_SCENE_TYPES_9.items()
+        if v.get("best_for_4husbands")
+    ]
+
+
+# ============================================================================
+# MEDIA_CONVERSION_RATIO — 매체 전환 비율 (v3.4 신규)
+# ============================================================================
+# 출처: 백종인 (2022) IV-1 "웹툰 5화는 드라마 한편"
+# 용도: 작품이 OTT 시리즈 전환을 염두에 둘 경우 분량·구조 산정에 활용
+
+MEDIA_CONVERSION_RATIO = {
+    "name": "웹툰·웹소설 ↔ 드라마 전환 비율",
+    "core_ratio": {
+        "webtoon_to_drama": "웹툰 5화 ≈ 드라마 1편",
+        "webnovel_to_drama": "웹소설 8~10화 ≈ 드라마 1편 (분량에 따라 변동)",
+    },
+    "rationale": [
+        "주 2회 방영되는 드라마의 한 회차 분량은 약 60~70분",
+        "웹툰 1화는 평균 50~80컷, 약 12~15분 분량",
+        "웹소설 1화는 약 5,000~7,000자, 약 10분 분량",
+        "따라서 웹툰 10화는 드라마 2회, 웹소설 50화는 드라마 5~6회 분량",
+    ],
+    "application_for_planning": {
+        "50화 웹소설": "드라마 5~6회분 분량 — OTT 미니시리즈(6~12회) 전환 시 추가 8~10화 분량 필요",
+        "100화 웹소설": "드라마 10~12회분 분량 — OTT 미니시리즈 한 시즌과 호환",
+        "16부작 드라마 역산": "웹소설로는 약 130~160화 필요",
+    },
+    "key_structural_difference": [
+        "웹소설: 매 화차마다 결제 유도하는 클리프행어 필요",
+        "드라마: 매 회차마다 한 단원 마무리 + 다음 회 예고",
+        "웹소설→드라마 각색 시: 회차 5개를 묶어 한 드라마 회차로 재구성",
+    ],
+    "applicable_4husbands": True,  # 50화 완성작 — OTT 시리즈 전환 시 추가 분량 필요
+    "source": "백종인 (2022), 공주대 만화학과 석사논문, IV-1",
+}
+
+
+def get_media_conversion_for_length(total_episodes: int) -> dict:
+    """작품 분량에 따른 드라마 전환 비율 계산.
+
+    Args:
+        total_episodes: 웹소설 총 화수
+
+    Returns:
+        {"webnovel_episodes": N, "drama_episodes_estimated": N, "ott_compatible": bool}
+    """
+    # 웹소설 8화당 드라마 1편 (중간값)
+    drama_episodes = round(total_episodes / 8, 1)
+    ott_compatible = 6 <= drama_episodes <= 16  # 일반 OTT 미니시리즈 회차 범위
+    return {
+        "webnovel_episodes": total_episodes,
+        "drama_episodes_estimated": drama_episodes,
+        "ott_compatible": ott_compatible,
+        "note": "OTT 미니시리즈는 보통 8~12회. 한 시즌으로 압축하려면 80~96화 권장",
+    }
+
+
+# ============================================================================
 # 자기 검증
 # ============================================================================
 
@@ -334,6 +533,17 @@ def _validate_module():
     # 로판 3대 독자 욕망
     assert len(READER_DESIRES_ROFAN) == 3, "로판 독자 욕망 3종 아님"
     
+    # v3.4 신규 — 첫 장면 9유형
+    assert len(FIRST_SCENE_TYPES_9) == 9, f"첫 장면 유형 9종 아님: {len(FIRST_SCENE_TYPES_9)}"
+    for k, v in FIRST_SCENE_TYPES_9.items():
+        assert "definition" in v, f"{k}에 definition 누락"
+        assert "category" in v, f"{k}에 category 누락"
+        assert "key_devices" in v, f"{k}에 key_devices 누락"
+    
+    # v3.4 신규 — 매체 전환 비율
+    assert "core_ratio" in MEDIA_CONVERSION_RATIO
+    assert "webnovel_to_drama" in MEDIA_CONVERSION_RATIO["core_ratio"]
+    
     return True
 
 
@@ -342,12 +552,14 @@ _validate_module()
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("data_strategy.py — 모듈 자가 검증")
+    print("data_strategy.py v3.4 — 모듈 자가 검증")
     print("=" * 60)
     print(f"로판 창작 전략: {len(ROFAN_CREATION_STRATEGY)}종")
     print(f"헤테로토피아 핵심 장치: {len(HETEROTOPIA_FRAME['key_devices'])}개")
     print(f"기본 시점 권장: {len(POV_BLENDING_GUIDE['default_pov'])}종")
     print(f"로판 독자 욕망: {len(READER_DESIRES_ROFAN)}종")
+    print(f"첫 장면 9유형 (v3.4): {len(FIRST_SCENE_TYPES_9)}종")
+    print(f"매체 전환 비율 (v3.4): {MEDIA_CONVERSION_RATIO['core_ratio']['webnovel_to_drama']}")
     print()
     
     print("[4명의 전남편들 적용 가능 전략]")
@@ -357,18 +569,17 @@ if __name__ == "__main__":
             print(f"    적용 메모: {data.get('4husbands_application', '')}")
     print()
     
-    print("[치유물 전략 — 핵심 장치]")
-    healing = ROFAN_CREATION_STRATEGY["치유물"]
-    for device in healing["key_devices"]:
-        print(f"  · {device}")
+    print("[첫 장면 9유형 — 4명의 전남편들 적합]")
+    for name in get_first_scene_types_for_4husbands():
+        scene = FIRST_SCENE_TYPES_9[name]
+        print(f"  ✓ {name} ({scene['category']})")
+        print(f"    {scene['definition'][:60]}...")
     print()
     
-    print("[헤테로토피아 — 4명의 전남편들 적용]")
-    print(f"  {HETEROTOPIA_FRAME['applicable_4husbands']}")
+    print("[매체 전환 — 50화 작품 기준]")
+    conversion = get_media_conversion_for_length(50)
+    print(f"  웹소설 50화 → 드라마 약 {conversion['drama_episodes_estimated']}회")
+    print(f"  OTT 호환: {conversion['ott_compatible']}")
     print()
     
-    print("[POV 권장 — 여성향 치정 빙의]")
-    print(f"  {get_pov_default('여성향_치정_빙의')}")
-    print()
-    
-    print("✓ 모든 검증 통과")
+    print("✓ v3.4 모든 검증 통과")

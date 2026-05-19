@@ -1,9 +1,9 @@
 """
-data_character.py — Engine v3.0
+data_character.py — Engine v3.4
 ================================
 캐릭터 메타정보 데이터셋
 
-수록 데이터:
+수록 데이터 (v3.0):
 - CHARACTER_ROLE_TAXONOMY — 9종 인물 역할 + 4세계 분류
 - MOE_ATTRIBUTES_25 — 모에 25속성 (외관/역할/성격)
 - HEROINE_MIND_FLOW_PATTERNS — 여성 주인공 마음 흐름 5단계
@@ -11,18 +11,22 @@ data_character.py — Engine v3.0
 - HERO_MIND_FLOW_PATTERNS — 남성 주인공 마음 흐름 3단계
 - READER_CONSUMPTION_TIERS — 소비자 3분화
 
+신규 데이터 (v3.4):
+- PROPP_CHARACTER_ARCHETYPES_7 — 블라디미르 프롭 7가지 캐릭터 원형
+- VOGLER_CHARACTER_ARCHETYPES_8 — 크리스토퍼 보글러 8가지 캐릭터 원형
+- TARGET_AGE_DISTRIBUTION — 타깃층에 따른 연령대 분포 (백종인 2022)
+- PROPP_VOGLER_TO_TAXONOMY_MAPPING — 학술 원형 → 우리 엔진 9종 역할 매핑
+
 원칙:
 - 학술 용어 풀어쓰기 (장르 오인 방지)
-  · "공포" → "불안·정체성 흔들림" (호러 장르 오인 방지)
-  · "이행분노" → "방향 잡힌 분노"
-  · "정동" → "마음 흐름"
 - 여성향 + 남성향 양쪽 동등 지원
-- 캐릭터 풀 데이터에 신규 필드 추가 (narrative_role, moe_attributes,
-  inner_state_arc, hero_type 등)
+- 캐릭터 풀 데이터에 신규 필드 추가 (narrative_role, moe_attributes, ...)
+- v3.4 학술 원형은 우리 9종 역할의 학술적 안전망 (작품 기획 시 검증 보조)
 
-사용 예시:
-    from data_character import CHARACTER_ROLE_TAXONOMY, get_role_for_character
-    role = get_role_for_character("김지훈")  # → "전사_정신적_스승"
+학술 출처 (v3.4 추가분):
+- 백종인 (2022), 공주대 만화학과 석사학위논문 [표 41/42, IV-6]
+- 블라디미르 프롭 (1928), 《민담 형태론》
+- 크리스토퍼 보글러 (1992), 《영웅의 여정 The Writer's Journey》
 """
 
 # ============================================================================
@@ -639,6 +643,293 @@ def get_moe_attribute(category: str, attribute: str) -> str:
 
 
 # ============================================================================
+# PROPP_CHARACTER_ARCHETYPES_7 — 블라디미르 프롭 7가지 캐릭터 원형 (v3.4 신규)
+# ============================================================================
+# 출처: 블라디미르 프롭 (1928), 《민담 형태론》; 백종인 (2022) [표 41]
+# 용도: 작품 캐릭터 분배 시 학술적 안전망. 우리 엔진 9종 역할의 분류 검증.
+
+PROPP_CHARACTER_ARCHETYPES_7 = {
+    "악당": {
+        "definition": "영웅에 맞서 싸우는 캐릭터",
+        "function": "영웅의 여정에 갈등을 만들고, 영웅이 극복해야 할 외부 위협이 됨",
+        "typical_features": [
+            "영웅의 욕망을 방해함",
+            "영웅을 위협하거나 직접 공격",
+            "결말에서 패배하거나 회개",
+        ],
+        "taxonomy_mapping": "악역_파괴자",  # 우리 9종 역할 중 매핑
+    },
+    "전령": {
+        "definition": "영웅이 자신의 결핍을 깨닫고 새로운 세상으로 떠나도록 만드는 캐릭터",
+        "function": "이야기의 시작을 알리고 영웅을 모험으로 부름",
+        "typical_features": [
+            "예고나 경고를 가져옴",
+            "영웅의 일상을 깨뜨림",
+            "단역으로 등장했다 사라질 수도 있음",
+        ],
+        "taxonomy_mapping": "기업가_현로(賢老)",
+    },
+    "마법을 부리는 조력자": {
+        "definition": "영웅의 멘토이자 영웅을 돕는 캐릭터",
+        "function": "지혜·기술·자원을 제공하여 영웅의 성장을 돕는 영적 안식처",
+        "typical_features": [
+            "영웅보다 경험이 많음",
+            "결정적 순간의 가르침",
+            "거리 유지하면서 일관된 신뢰",
+        ],
+        "taxonomy_mapping": "전사_정신적_스승",
+        "applicable_4husbands": True,  # 김지훈
+    },
+    "공주/공주의 아버지": {
+        "definition": "영웅이 여정 끝에 결혼하거나 보상받는 대상",
+        "function": "영웅의 욕망 대상이자 여정의 목표",
+        "typical_features": [
+            "고귀한 신분이거나 영혼이 귀함",
+            "구원받거나 결합되는 대상",
+            "결말의 보상",
+        ],
+        "taxonomy_mapping": "전사_정신적_스승",  # 메인 남주가 공주 역할일 때
+    },
+    "기부자": {
+        "definition": "영웅의 능력을 키워주거나, 영웅에게 마법도구를 건네주는 캐릭터",
+        "function": "영웅이 도전 과제를 풀 수 있게 자원·지식을 부여",
+        "typical_features": [
+            "조건부 도움 (시험 통과 시 보상)",
+            "특별한 아이템·정보 제공",
+            "결정적 순간의 한 번 도움",
+        ],
+        "taxonomy_mapping": "예술_문화창조_제공자",
+    },
+    "영웅": {
+        "definition": "주인공. 결핍을 가진 채 여정에 나서 결말에 보상받음 (공주와 결혼)",
+        "function": "이야기의 중심. 변화·성장의 주체",
+        "typical_features": [
+            "초기 결핍 또는 결함",
+            "여정을 통한 성장",
+            "결말의 결합 또는 완성",
+        ],
+        "taxonomy_mapping": "주인공_여주_변화자",  # 또는 주인공_남주
+    },
+    "가짜 영웅": {
+        "definition": "영웅의 행동을 모방하거나, 영웅의 자리를 가로채고자 애쓰는 캐릭터",
+        "function": "영웅과 외형은 비슷하나 본질이 다른 인물 — 진짜 영웅의 가치를 드러내는 거울",
+        "typical_features": [
+            "영웅의 자리를 노림",
+            "거짓 영웅 행세",
+            "결말에서 진위가 드러남",
+        ],
+        "taxonomy_mapping": "악역_파괴자",  # 또는 잠재 빌런
+        "applicable_4husbands": True,  # 이수연
+    },
+}
+
+
+# ============================================================================
+# VOGLER_CHARACTER_ARCHETYPES_8 — 크리스토퍼 보글러 8가지 캐릭터 원형 (v3.4 신규)
+# ============================================================================
+# 출처: 크리스토퍼 보글러 (1992), 《영웅의 여정》; 백종인 (2022) [표 42]
+# 용도: 작품 캐릭터 분배 시 더 세분화된 학술적 안전망
+
+VOGLER_CHARACTER_ARCHETYPES_8 = {
+    "영웅": {
+        "definition": "주인공, 프로타고니스트",
+        "function": "이야기의 중심. 독자가 동일시하는 인물",
+        "typical_features": [
+            "결핍·갈등을 가진 채 여정 시작",
+            "변화하고 성장하는 주체",
+            "독자의 감정이입 대상",
+        ],
+        "taxonomy_mapping": "주인공_여주_변화자",
+    },
+    "전령": {
+        "definition": "영웅의 출발을 알려주는 캐릭터. 전령 캐릭터의 역할은 암시적 이벤트로 대체될 수도 있다",
+        "function": "이야기의 시작 신호",
+        "typical_features": [
+            "초기에 짧게 등장하고 사라질 수 있음",
+            "사건이나 정보를 가져옴",
+            "꼭 사람이 아니어도 됨 (편지·꿈·우연)",
+        ],
+        "taxonomy_mapping": "기업가_현로(賢老)",
+    },
+    "멘토": {
+        "definition": "영웅의 출발을 독려하고 도와주는 스승. 영웅 자신이 지키고자 하는 정신적 가치관이나 도덕적 원칙을 대변한다",
+        "function": "지혜와 도덕적 기준 제공",
+        "typical_features": [
+            "영웅보다 경험·지혜가 많음",
+            "결정적 가르침을 줌",
+            "영웅의 내적 가치관을 형상화",
+        ],
+        "taxonomy_mapping": "전사_정신적_스승",
+        "applicable_4husbands": True,  # 김지훈
+    },
+    "관문수호자": {
+        "definition": "영웅의 자격과 능력을 시험하는 캐릭터 또는 주인공을 괴롭히는 내적 두려움. 반드시 인물로 구현되지 않고, 이벤트로 대체될 수 있다",
+        "function": "여정의 단계마다 영웅을 시험",
+        "typical_features": [
+            "영웅의 길을 가로막음",
+            "통과 의례 역할",
+            "내적 두려움을 외면화한 형태일 수도 있음",
+        ],
+        "taxonomy_mapping": "기업가_현로(賢老)",  # 권력자 측면
+        "applicable_4husbands": True,  # 이준호
+    },
+    "그림자/먹구름": {
+        "definition": "영웅과 대립하는 적대자(악당) 또는 인물들로 드러나지만, 눈에 보이지 않는(사회적·정치적·도덕적) 억압일 수도 있다",
+        "function": "영웅이 극복해야 할 가장 큰 외부·내부 위협",
+        "typical_features": [
+            "프롭의 '악당'과 유사하나 더 넓은 개념",
+            "사회적 억압·시스템적 폭력도 포함",
+            "영웅의 그림자 측면(내부의 적)일 수도 있음",
+        ],
+        "taxonomy_mapping": "악역_파괴자",
+    },
+    "변신자재자": {
+        "definition": "영웅 편인지 악당 편인지 헷갈리는 캐릭터(동맹군의 일원으로 등장할 때도 있는데, 이때에는 배신자가 되기도 한다",
+        "function": "독자에게 긴장과 의심을 유발",
+        "typical_features": [
+            "정체나 의도가 불분명",
+            "결말에서 진위가 드러남",
+            "잠재 빌런 또는 의외의 조력자",
+        ],
+        "taxonomy_mapping": "악역_파괴자",  # 또는 조연
+        "applicable_4husbands": True,  # 이수연 (잠재 빌런/조력자 양면)
+    },
+    "동맹군": {
+        "definition": "영웅의 동맹군은 충성스러운 조수, 진실한 조력자, 애인이나 단짝 친구 등으로 구성된다",
+        "function": "영웅의 든든한 지원군",
+        "typical_features": [
+            "영웅을 믿고 따름",
+            "위기 때 함께 함",
+            "영웅의 감정 의탁처",
+        ],
+        "taxonomy_mapping": "예술_문화창조_제공자",
+        "applicable_4husbands": True,  # 박재윤, 김민수
+    },
+    "어릿광대": {
+        "definition": "보통 영웅의 동맹군에 소속한 일원이지만, 그중에서도 유머(코믹)를 담당하는 캐릭터",
+        "function": "긴장 완화와 즐거움 제공",
+        "typical_features": [
+            "코믹 릴리프",
+            "심각한 장면 사이의 환기",
+            "독자에게 친근함을 줌",
+        ],
+        "taxonomy_mapping": "예술_문화창조_제공자",  # 가벼운 측면
+    },
+}
+
+
+# ============================================================================
+# PROPP_VOGLER_TO_TAXONOMY_MAPPING — 학술 원형 → 우리 9종 역할 매핑 (v3.4 신규)
+# ============================================================================
+# 용도: 작품 기획 시 학술 원형으로 분류한 캐릭터가 우리 9종 역할 중 어느 자리에 들어가는지 검증
+
+PROPP_VOGLER_TO_TAXONOMY_MAPPING = {
+    "악당": ["악역_파괴자"],
+    "그림자": ["악역_파괴자"],
+    "그림자/먹구름": ["악역_파괴자"],
+    "가짜 영웅": ["악역_파괴자"],
+    "변신자재자": ["악역_파괴자", "예술_문화창조_제공자"],  # 양면적
+    "전령": ["기업가_현로(賢老)", "예술_문화창조_제공자"],
+    "관문수호자": ["기업가_현로(賢老)", "악역_파괴자"],
+    "마법을 부리는 조력자": ["전사_정신적_스승"],
+    "멘토": ["전사_정신적_스승"],
+    "기부자": ["예술_문화창조_제공자", "전사_정신적_스승"],
+    "동맹군": ["예술_문화창조_제공자"],
+    "어릿광대": ["예술_문화창조_제공자"],
+    "공주/공주의 아버지": ["전사_정신적_스승"],
+    "영웅": ["주인공_여주_변화자", "주인공_남주"],
+}
+
+
+# ============================================================================
+# TARGET_AGE_DISTRIBUTION — 타깃층에 따른 연령대 분포 (v3.4 신규)
+# ============================================================================
+# 출처: 백종인 (2022) IV-6 "타깃층에 따른 캐릭터 설정"
+# 용도: 작품 기획 시 target_persona 작성을 보강하는 데이터
+
+TARGET_AGE_DISTRIBUTION = {
+    "name": "타깃층 연령대 분포 가이드",
+    "principle": "주인공 외 중년·노년 캐릭터의 균형이 시청자(독자)의 공감대 확장에 결정적",
+    
+    "age_brackets": {
+        "10대~20대 초반": {
+            "typical_role": "주인공·서브 인물",
+            "platform_reader_share": "웹툰 주 독자층",
+            "narrative_function": "현재진행형 욕망과 갈등의 주체",
+        },
+        "20대 후반~30대": {
+            "typical_role": "주인공·메인 남주",
+            "platform_reader_share": "웹소설 + 드라마 공통 독자층",
+            "narrative_function": "사랑과 직업의 균형 갈등",
+        },
+        "40대~50대": {
+            "typical_role": "조연 (부모·상사·멘토)",
+            "platform_reader_share": "드라마 시청자층",
+            "narrative_function": "주인공에게 영향을 주는 권위·지지·압박",
+        },
+        "60대 이상": {
+            "typical_role": "조연 (할머니·할아버지·가문 어른)",
+            "platform_reader_share": "드라마 시청자층",
+            "narrative_function": "가족·전통의 무게, 화해의 대상",
+        },
+    },
+    
+    "balance_guidelines": {
+        "웹소설_only_타깃": {
+            "20대~30대 비율": "80% 이상",
+            "40대 이상 등장": "최소 — 부모/상사 정도",
+            "rationale": "웹소설 주 독자층의 일상에 밀접한 인물 위주",
+        },
+        "OTT_시리즈_전환_고려": {
+            "20대~30대 비율": "50~60%",
+            "40대 이상 등장": "필수 — 부모·상사·가문·중요 조연으로 4~6명",
+            "rationale": "드라마 시청자층의 공감 확보, 스타급 중년 배우 캐스팅 자리 마련",
+        },
+        "4husbands_application": {
+            "current_distribution": "20대 후반~30대 중심 (시호·전남편 5명)",
+            "ott_potential": "이수연(30대), 가문 측 인물(40~50대) 보강 시 OTT 호환성 증가",
+        },
+    },
+    
+    "examples": [
+        "치즈 인 더 트랩 — 대학생 + 중년 배우들이 가족·교수 역할로 공감대 확장",
+        "내 ID는 강남미인 — 대학생 + 강미래·도경석 부모(중년) 등장으로 다층 공감",
+        "그대를 사랑합니다 — 주인공이 노년층임에도 세대 상관없이 공감 확보",
+    ],
+    
+    "source": "백종인 (2022), 공주대 만화학과 석사논문, IV-6",
+}
+
+
+def get_propp_archetype(name: str) -> dict:
+    """프롭 7원형 정의 반환."""
+    return PROPP_CHARACTER_ARCHETYPES_7.get(name, {})
+
+
+def get_vogler_archetype(name: str) -> dict:
+    """보글러 8원형 정의 반환."""
+    return VOGLER_CHARACTER_ARCHETYPES_8.get(name, {})
+
+
+def map_archetype_to_taxonomy(archetype_name: str) -> list:
+    """학술 원형명 → 우리 9종 역할 후보 목록."""
+    return PROPP_VOGLER_TO_TAXONOMY_MAPPING.get(archetype_name, [])
+
+
+def get_4husbands_archetype_mapping() -> dict:
+    """4명의 전남편들 5인을 학술 원형에 매핑한 결과 반환."""
+    return {
+        "한시호": {"propp": "영웅", "vogler": "영웅", "taxonomy": "주인공_여주_변화자"},
+        "김지훈": {"propp": "마법을 부리는 조력자", "vogler": "멘토", "taxonomy": "전사_정신적_스승"},
+        "이준호": {"propp": "악당", "vogler": "관문수호자", "taxonomy": "악역_파괴자"},
+        "박재윤": {"propp": "공주/공주의 아버지", "vogler": "동맹군", "taxonomy": "예술_문화창조_제공자"},
+        "김민수": {"propp": "기부자", "vogler": "동맹군", "taxonomy": "예술_문화창조_제공자"},
+        "최진규": {"propp": "기부자", "vogler": "동맹군", "taxonomy": "예술_문화창조_제공자"},
+        "이수연": {"propp": "가짜 영웅", "vogler": "변신자재자", "taxonomy": "악역_파괴자"},
+    }
+
+
+# ============================================================================
 # 자기 검증
 # ============================================================================
 
@@ -662,6 +953,20 @@ def _validate_module():
     
     # 소비자 3분화
     assert len(READER_CONSUMPTION_TIERS) == 3, "소비자 3분화 아님"
+    
+    # v3.4 신규 — 프롭 7원형
+    assert len(PROPP_CHARACTER_ARCHETYPES_7) == 7, f"프롭 7원형 아님: {len(PROPP_CHARACTER_ARCHETYPES_7)}"
+    
+    # v3.4 신규 — 보글러 8원형
+    assert len(VOGLER_CHARACTER_ARCHETYPES_8) == 8, f"보글러 8원형 아님: {len(VOGLER_CHARACTER_ARCHETYPES_8)}"
+    
+    # v3.4 신규 — 매핑 테이블
+    assert "악당" in PROPP_VOGLER_TO_TAXONOMY_MAPPING
+    assert "영웅" in PROPP_VOGLER_TO_TAXONOMY_MAPPING
+    
+    # v3.4 신규 — 타깃 연령 분포
+    assert "age_brackets" in TARGET_AGE_DISTRIBUTION
+    assert len(TARGET_AGE_DISTRIBUTION["age_brackets"]) == 4, "연령대 4구간 아님"
     
     return True
 

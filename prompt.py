@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v3.3 — prompt.py
+👖 BLUE JEANS WEB NOVEL ENGINE v3.4 — prompt.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 v2.6.4: Context-Aware Description (첫 등장 풀 / 재등장 압축 / 씬 타입 차등)
@@ -10,8 +10,18 @@ v3.3:   19금 콘텐츠 충실도 (ADULT_CONTENT_FIDELITY) 11번째 자가검수
         · 19금/듀얼 작품 본문 집필 프롬프트에 관능 회피 금지 룰 추가 (A17·A18)
         · intimacy_schedule 충분 분량 강제 (50화 = 8지점 이상)
         · 본문 집필 시 회차당 최소 1회 친밀 신호(tension 등) 강제
+v3.4:   학술 논문 기반 메이저 업데이트 (백종인 2022 + 블레이크 스나이더 + 프롭/보글러)
+        · A19. EP1 첫 장면 9유형 강제 (인물제시·사건발생·일상제시·배경제시·회상·전체압축·행동·대비상징·의문유발)
+        · A20. 1차/2차 위기 구조 강제 (1차: 50~65% 메인플롯 / 2차: 75~85% 서브플롯)
+        · A21. 안 좋은 첫인상-한 공간 플롯 강제 (EP1~5)
+        · 모티프 사전 205종 통합 재구조화 (NARRATIVE_MOTIFS_205)
+        · 버디러브 5단계 포뮬러 추가
+        · 프롭 7원형 + 보글러 8원형 학술 안전망
 © 2026 BLUE JEANS PICTURES
 """
+
+ENGINE_VERSION = "v3.4.0"
+ENGINE_BUILD_DATE = "2026-05-19"
 
 # =================================================================
 # [v3.0] Phase A 데이터 모듈 import (선택적 — 실패해도 v2.6.4 동작 유지)
@@ -22,6 +32,12 @@ try:
         ROMANCE_FORMULAS,
         MOVEMENT_NARRATIVE_PATTERNS,
         HIGH_RATING_ROMANCE_MOTIFS,
+        # v3.4 신규
+        NARRATIVE_MOTIFS_205,
+        BAD_FIRST_IMPRESSION_PLOT,
+        TWO_TIER_CRISIS_STRUCTURE,
+        LEGACY_MOTIF_MAPPING,
+        convert_legacy_motifs,
     )
     _V3_MOTIFS_AVAILABLE = True
 except ImportError:
@@ -29,6 +45,11 @@ except ImportError:
     ROMANCE_FORMULAS = {}
     MOVEMENT_NARRATIVE_PATTERNS = {}
     HIGH_RATING_ROMANCE_MOTIFS = {}
+    NARRATIVE_MOTIFS_205 = {}
+    BAD_FIRST_IMPRESSION_PLOT = {}
+    TWO_TIER_CRISIS_STRUCTURE = {}
+    LEGACY_MOTIF_MAPPING = {}
+    convert_legacy_motifs = lambda x: {"converted": x, "unmapped": [], "warnings": []}
     _V3_MOTIFS_AVAILABLE = False
 
 try:
@@ -43,6 +64,11 @@ try:
         detect_work_orientation,
         get_stage_for_episode_with_orientation,
         get_mind_flow_for_orientation,
+        # v3.4 신규
+        PROPP_CHARACTER_ARCHETYPES_7,
+        VOGLER_CHARACTER_ARCHETYPES_8,
+        TARGET_AGE_DISTRIBUTION,
+        PROPP_VOGLER_TO_TAXONOMY_MAPPING,
     )
     _V3_CHARACTER_AVAILABLE = True
 except ImportError:
@@ -56,6 +82,10 @@ except ImportError:
     detect_work_orientation = lambda concept: "female"
     get_stage_for_episode_with_orientation = lambda ep, total=42, orientation="female": {}
     get_mind_flow_for_orientation = lambda orientation: {"stages": []}
+    PROPP_CHARACTER_ARCHETYPES_7 = {}
+    VOGLER_CHARACTER_ARCHETYPES_8 = {}
+    TARGET_AGE_DISTRIBUTION = {}
+    PROPP_VOGLER_TO_TAXONOMY_MAPPING = {}
     _V3_CHARACTER_AVAILABLE = False
 
 try:
@@ -76,12 +106,17 @@ try:
         ROFAN_CREATION_STRATEGY,
         HETEROTOPIA_FRAME,
         POV_BLENDING_GUIDE,
+        # v3.4 신규
+        FIRST_SCENE_TYPES_9,
+        MEDIA_CONVERSION_RATIO,
     )
     _V3_STRATEGY_AVAILABLE = True
 except ImportError:
     ROFAN_CREATION_STRATEGY = {}
     HETEROTOPIA_FRAME = {}
     POV_BLENDING_GUIDE = {}
+    FIRST_SCENE_TYPES_9 = {}
+    MEDIA_CONVERSION_RATIO = {}
     _V3_STRATEGY_AVAILABLE = False
 
 
@@ -1841,7 +1876,7 @@ RATING_CONVERSION_RULES = """[19금 → 15금 변환 규칙]
 # =================================================================
 # [6] AI ANTI-PATTERN
 # =================================================================
-AI_ANTI_PATTERN = """[AI 문체 탈출 규칙 A1~A16]
+AI_ANTI_PATTERN = """[AI 문체 탈출 규칙 A1~A21]
 A1. 종결어미 반복 금지 (연속 3문장 같은 종결어미 불가)
 A2. 주어 반복 금지 (연속 3문장 같은 주어 불가)
 A3. 구문 구조 반복 금지
@@ -1962,6 +1997,66 @@ A14. 감정 나열 금지 ("분노와 슬픔이 밀려왔다" → 단일 행동)
 - 첫 관능 씬은 EP10~20 사이 권장
 - 후반부는 emotional_union, deep_intimacy 단계 진입
 - 50화 작품은 최소 8회 이상의 관능 지점 배치 권장
+
+[★★★ A19. EP1 첫 장면 9유형 강제 — v3.4 신규 ★★★]
+이 룰은 EP1(첫 회차) 집필 시에만 적용된다.
+
+EP1의 첫 장면은 반드시 다음 9유형 중 하나로 명시적으로 분류하여 작성한다:
+[독자를 마중하는 5유형]
+1. 인물제시형 — 인물의 성격을 단적으로 보여주는 장면. 환생/빙의 작품 권장.
+2. 사건발생형 — 갑작스러운 사건이 먼저 발생. 다음 페이지 견인 강함.
+3. 일상제시형 — 평범한 일상에 작은 균열 예고.
+4. 배경제시형 — 압도적 세계관 스케일. 판타지·무협·사극용.
+5. 회상형 — 과거의 결정적 사건이 인물을 만든 흐름.
+6. 전체압축형 — 프롤로그·예고편 형식의 전체 응축.
+[독자를 유혹하는 4유형]
+7. 행동형 — 인물의 반복적 습관·행동이 본질을 표현.
+8. 대비상징형 — 두 인물·상황의 극명한 대비로 갈등 암시.
+9. 의문유발형 — 비현실적 사건·상황으로 즉시 의문 유발. 환생·빙의·SF 권장.
+
+EP1 집필 시 concept_card.first_scene_type 필드가 있으면 그 유형의 디바이스를
+첫 단락에 반드시 활용한다. 필드가 없으면 가장 적합한 유형을 자동 선택하여
+첫 단락에 그 유형의 특징을 분명히 드러낸다.
+
+[★★★ A20. 1차/2차 위기 구조 강제 — v3.4 신규 ★★★]
+이 룰은 EP 위치가 전체의 50% 이후인 회차에서 적용된다.
+
+로맨스 작품의 후반부 긴장 곡선은 반드시 1차 위기와 2차 위기 두 층으로 구성:
+- 1차 위기 (메인 플롯): 전체의 50~65% 지점, 2~5회차 분량
+  · '우리는 맞지 않는 사이였어' 같은 감정 차원의 위기
+  · 해소: 두 인물의 감정 확인 → 더 강한 결합
+- 2차 위기 (서브 플롯): 전체의 75~85% 지점, 5~10회차 분량
+  · 기업의 음모·권력자의 보복·사회 차이의 폭발 등 모든 것을 걸어야 하는 규모
+  · 핵심 질문: '모든 걸 잃어도 그 사람을 선택할 것이냐?'
+  · 해소: 남주가 모든 것을 포기하고 사랑을 선택 → 잃은 것도 회복
+
+집필 시:
+- 50~65% 지점 회차에서 메인플롯 1차 위기 시동
+- 65~75% 지점에서 1차 위기 해소
+- 75% 지점부터 2차 위기 시동 (서브플롯의 외부 위협)
+- 85% 지점 이후 2차 위기 해소 + 결말
+
+1차 없이 2차로 가면 감정 빌드가 약하고, 2차 없이 1차만 반복하면 후반 추진력 부족.
+
+[★★★ A21. 안 좋은 첫인상-한 공간 플롯 강제 — v3.4 신규 ★★★]
+이 룰은 로맨스 장르 EP1~5 회차에 적용된다.
+
+한국 로맨스 드라마 27편(김은숙 8편 + 지상파 14편 + 웹툰 원작 5편) 모두에서
+사용된 표준 플롯. EP1~5는 반드시 다음 구조를 갖춰야 한다:
+1. 첫 마주침 — 책 부딪치기·어깨 부딪치기·오해·같은 자리 다툼·기싸움 등
+2. 첫인상 결정 — "저 사람 이상해", "저 사람 싫어" 같은 부정적 첫인상
+3. 한 공간 강제 — 회사·학교·동아리·카페·계약 등의 이유로 계속 마주칠 수밖에 없는 상황
+4. 미세한 변화 — 일상적 접촉 누적되며 감정이 미세하게 흔들림
+5. 첫 감정 인지 — 5화 무렵 "내가 이 사람을 의식하고 있다"는 자각
+
+원칙: "첫인상이 안 좋고 갈등 구조가 형성되지만 함께하는 상황이 없다면
+어떠한 감정도 생길 수 없다. 그 만남이 좋거나 나쁘거나 관계없이 계속 함께할
+수 있는 상황이어야 한다." (백종인 2022)
+
+집필 시:
+- EP1~2: 첫 마주침 + 첫인상 부정. 갈등 명확히
+- EP3~4: 한 공간 강제 (이유 분명히 제시) + 일상적 접촉 누적
+- EP5: 첫 감정 인지 (의식·흔들림 첫 자각)
 """.strip()
 
 # =================================================================

@@ -1,9 +1,19 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v3.0 — main.py
+👖 BLUE JEANS WEB NOVEL ENGINE v3.4 — main.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 v3.0: Phase A 데이터 모듈 통합 (motifs/character/market/strategy)
       Phase B 신규 5종 블록 빌더 활성화 (use_v3_blocks=True)
+v3.2: 출력 위생 + 대사 환원 + 자가검수 10축
+v3.3: ADULT_CONTENT_FIDELITY 11번째 축 + 등급별 동적 가중치 + A17·A18 룰
+v3.4: 학술 논문 기반 메이저 업데이트 (백종인 2022 + 스나이더 + 프롭/보글러)
+      · 모티프 사전 205종 통합 재구조화 (NARRATIVE_MOTIFS_205)
+      · 첫 장면 9유형 (FIRST_SCENE_TYPES_9)
+      · 1차/2차 위기 구조 (TWO_TIER_CRISIS_STRUCTURE)
+      · 안 좋은 첫인상-한 공간 플롯 (BAD_FIRST_IMPRESSION_PLOT)
+      · 버디러브 5단계 포뮬러 추가
+      · 프롭 7원형 + 보글러 8원형 학술 안전망
+      · A19·A20·A21 룰 본문 집필 프롬프트에 강제 주입
 © 2026 BLUE JEANS PICTURES
 """
 
@@ -3355,7 +3365,7 @@ with main_tabs[2]:
                             # (15금 트랙은 가중치 0으로 자동 처리)
                             
                             # 1차: 패턴 매칭 검수 (빠름·무비용)
-                            with st.spinner(f"1차 패턴 매칭 검수 중... (11축 v3.3 — 19금 충실도 포함, {check_rating} 트랙)"):
+                            with st.spinner(f"1차 패턴 매칭 검수 중... (11축 v3.4 — 19금 충실도 포함, {check_rating} 트랙)"):
                                 rule_result = compute_episode_validation_score(
                                     concept=concept,
                                     character_bible=chars_data,
@@ -3429,7 +3439,7 @@ with main_tabs[2]:
                                 st.metric("최저 회차", f"EP{w['ep']} ({w['overall']})")
                         
                         # 5축 평균
-                        st.markdown("**11축 누적 평균** (v3.3+)")
+                        st.markdown("**11축 누적 평균** (v3.4)")
                         axis_labels = {
                             "MATERIAL_USAGE": "재료 활용",
                             "CHARACTER_CONSISTENCY": "캐릭터 차별화",
