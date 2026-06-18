@@ -14,6 +14,8 @@ v3.4: 학술 논문 기반 메이저 업데이트 (백종인 2022 + 스나이더
       · 버디러브 5단계 포뮬러 추가
       · 프롭 7원형 + 보글러 8원형 학술 안전망
       · A19·A20·A21 룰 본문 집필 프롬프트에 강제 주입
+v3.4.1: [버그 수정] STEP 3-4 독자 시뮬레이터 multiselect 크래시 해결
+        · concept_persona가 READER_PERSONAS 키와 불일치할 때 default 필터링
 © 2026 BLUE JEANS PICTURES
 """
 
@@ -3527,7 +3529,12 @@ with main_tabs[2]:
                 # 타겟 페르소나 선택 (컨셉 카드 기본값 + 수동 추가 선택 가능)
                 concept_persona = concept.get("target_persona", "")
                 st.markdown("**시뮬레이션할 독자 페르소나 (복수 선택 가능)**")
-                default_personas = [concept_persona] if concept_persona else []
+                # concept_persona가 READER_PERSONAS 키와 정확히 일치할 때만 기본값으로 사용
+                default_personas = (
+                    [concept_persona]
+                    if concept_persona in READER_PERSONAS
+                    else []
+                )
                 sim_personas = st.multiselect(
                     "독자층",
                     list(READER_PERSONAS.keys()),

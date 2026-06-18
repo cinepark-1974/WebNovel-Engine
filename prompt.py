@@ -20,8 +20,8 @@ v3.4:   학술 논문 기반 메이저 업데이트 (백종인 2022 + 블레이�
 © 2026 BLUE JEANS PICTURES
 """
 
-ENGINE_VERSION = "v3.4.0"
-ENGINE_BUILD_DATE = "2026-05-19"
+ENGINE_VERSION = "v3.4.1"
+ENGINE_BUILD_DATE = "2026-06-18"
 
 # =================================================================
 # [v3.0] Phase A 데이터 모듈 import (선택적 — 실패해도 v2.6.4 동작 유지)
