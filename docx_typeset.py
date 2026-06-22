@@ -48,14 +48,13 @@ docx_typeset.py — 웹소설 조판 양식 출력 모듈
         강화: 회차 뒤쪽 30% 영역에서 메타 라벨 위치들을 모두 수집해
               가장 앞 메타 라벨부터 끝까지 일괄 제거
         EP10 같은 케이스(클리프행어 내용에 본문 인용 끼어 있음) 정확 처리
-- v3.1.5: 따옴표 둥글게 + 문장 앞 언더바 제거 — 출력 위생 자동화
-        곧은 큰따옴표 " → 둥근 " " (회차 본문 전체 흐름 기준 짝맞춤)
-        곧은 작은따옴표 ' → 둥근 ' '
-        문장(줄) 앞에 AI가 붙인 속마음 표시 언더바 _ 제거
-        (…줄임표는 보존, 본문 중간의 a_b 언더바는 보존)
-        _sanitize_episode_text에 통합 → 4개 빌더 전부에 자동 적용
-        (build_safe_season_docx / build_styled_episode_docx /
-         build_typeset_episode / build_typeset_milestone)
+- v3.4.1: 곧은 따옴표 → 둥근(타이포그래픽) 따옴표 자동 변환
+        _convert_straight_quotes 신규 — 곧은 큰/작은따옴표(" ')를
+        유니코드 둥근 따옴표(“ ” ‘ ’)로 교체. 폰트와 무관하게 둥근 모양 유지.
+        여는/닫는 판별은 등장 순서 기반이라 반드시 회차 전체 텍스트를
+        한 번에 처리(_sanitize_episode_text 안에서 호출). 단락 단위 금지.
+        \\<...\\> escape 변환도 둥근 작은따옴표로 생성하도록 수정.
+        4종 빌더 전부에 자동 적용(공통 초크포인트 _sanitize_episode_text).
 """
 
 from io import BytesIO
@@ -261,9 +260,11 @@ def _strip_inline_md_escapes(line: str) -> str:
     import re
     s = line
     
-    # 1) \<...\> → '...' 교체 (작은따옴표 = 속마음 표기)
-    #    LLM이 일기·메모·강조용으로 꺾쇠를 escape한 흔적 정리
-    s = re.sub(r'\\<(.*?)\\>', r"'\1'", s)
+    # 1) \<...\> → ‘...’ 교체 (둥근 작은따옴표 = 속마음 표기) [v3.4.1]
+    #    LLM이 일기·메모·강조용으로 꺾쇠를 escape한 흔적 정리.
+    #    이 단계는 단락 단위라 _convert_straight_quotes를 못 거치므로
+    #    여기서 직접 둥근 따옴표(‘ ’)로 생성한다.
+    s = re.sub(r'\\<(.*?)\\>', '\u2018' + r'\1' + '\u2019', s)
     
     # 2) 백슬래시 escape 제거 (별, 언더스코어)
     s = s.replace('\\*', '*').replace('\\_', '_')
@@ -412,81 +413,46 @@ def _strip_trailing_meta_block(text: str) -> str:
     return '\n'.join(result_lines)
 
 
-# ══════════════════════════════════════════════
-# [v3.1.5] 따옴표 둥글게 + 문장 앞 언더바 제거
-# ══════════════════════════════════════════════
-# AI 출력에 섞이는 곧은 따옴표(" ')와 속마음 표시용 언더바(_)를
-# 빌드 시점에 자동 정리합니다. 작가가 매번 수동 교정할 필요가 없습니다.
-#
-# 따옴표 변환은 반드시 "회차 본문 전체"를 한 번에 처리해야 합니다.
-# 한 단락에서 열린 따옴표가 다음 단락에서 닫히는 경우, 줄 단위로 처리하면
-# 짝이 어긋나 둘 다 여는 따옴표가 되는 사고가 납니다.
-# ══════════════════════════════════════════════
+def _convert_straight_quotes(text: str) -> str:
+    r"""[v3.4.1] 곧은 따옴표를 둥근(타이포그래픽) 따옴표로 변환합니다.
 
-_STRAIGHT_DQ = chr(34)        # "  곧은 큰따옴표
-_STRAIGHT_SQ = chr(39)        # '  곧은 작은따옴표
-_LEFT_DQ = chr(0x201C)        # " 여는 큰따옴표
-_RIGHT_DQ = chr(0x201D)       # " 닫는 큰따옴표
-_LEFT_SQ = chr(0x2018)        # ' 여는 작은따옴표
-_RIGHT_SQ = chr(0x2019)       # ' 닫는 작은따옴표
+    곧은 따옴표(" ')는 폰트에 따라 직선으로 보이는 'AI 티 나는' 문자입니다.
+    이를 유니코드 둥근 따옴표(“ ” ‘ ’)로 교체하면 어떤 폰트에서도
+    항상 둥근 모양으로 표시됩니다.
 
+    핵심 원칙 — 반드시 전체 본문을 한 번에 처리:
+        여는따옴표/닫는따옴표 판별은 등장 순서(홀수=여는, 짝수=닫는)로
+        결정합니다. 단락 단위로 끊어서 처리하면 한 대사가 여러 단락에
+        걸칠 때 짝이 어긋납니다. 그래서 이 변환은 단락 루프가 아니라
+        _sanitize_episode_text(회차 전체 텍스트) 안에서 한 번에 돕니다.
 
-def _curl_quotes(text: str) -> str:
-    """곧은 따옴표를 둥근 따옴표로 변환합니다 (짝맞춤 방식).
-
-    본문 전체를 앞에서부터 훑으며, 곧은 큰따옴표가 나올 때마다
-    여는/닫는을 번갈아 적용합니다. 작은따옴표도 동일합니다.
-
-    예) "누구세요?"   → "누구세요?"
-        '괜찮아'       → '괜찮아'
-
-    이미 둥근 따옴표인 글자는 건드리지 않습니다.
+    이미 둥근 따옴표인 문자는 건드리지 않습니다(직선 카운터에 영향 없음).
     """
-    if not text:
-        return text
     out = []
-    dq_open = True   # 다음 곧은 큰따옴표가 여는 것인지
-    sq_open = True   # 다음 곧은 작은따옴표가 여는 것인지
+    dq_open = True   # 다음 곧은 큰따옴표가 여는따옴표 차례인지
+    sq_open = True   # 다음 곧은 작은따옴표가 여는따옴표 차례인지
     for ch in text:
-        if ch == _STRAIGHT_DQ:
-            out.append(_LEFT_DQ if dq_open else _RIGHT_DQ)
+        if ch == '"':
+            out.append('\u201c' if dq_open else '\u201d')  # “ / ”
             dq_open = not dq_open
-        elif ch == _STRAIGHT_SQ:
-            out.append(_LEFT_SQ if sq_open else _RIGHT_SQ)
+        elif ch == "'":
+            out.append('\u2018' if sq_open else '\u2019')  # ‘ / ’
             sq_open = not sq_open
         else:
             out.append(ch)
     return ''.join(out)
 
 
-def _strip_leading_underscores(text: str) -> str:
-    r"""각 줄 맨 앞에 붙은 속마음 표시 언더바(_)를 제거합니다.
-
-    AI가 마크다운식으로 속마음·내레이션을 표시하려고 줄 앞에 붙이는
-    _괜찮아. / _이건 그냥 일이야. 같은 언더바를 정리합니다.
-
-    보존되는 것:
-    - …줄임표로 시작하는 줄 (언더바가 아니므로 영향 없음)
-    - 본문 중간의 언더바 (예: a_b 변수) — 줄 맨 앞만 처리하므로 안전
-    """
-    import re
-    if not text:
-        return text
-    # 각 줄의 (선행 공백) 다음에 오는 언더바 1개 이상을 제거
-    return re.sub(r'(?m)^([ \t]*)_+', r'\1', text)
-
-
 def _sanitize_episode_text(text: str) -> str:
-    """[v3.1.2 / v3.1.5] 회차 본문에 위생 처리 일괄 적용.
+    """[v3.1.2 / v3.4.1] 회차 본문에 위생 처리 일괄 적용.
     
     1) 회차 끝 메타정보 블록 제거 (안전망)
-    2) [v3.1.5] 곧은 따옴표 → 둥근 따옴표 (본문 전체 흐름 기준 짝맞춤)
-    3) [v3.1.5] 문장 앞 속마음 표시 언더바(_) 제거
-    4) (단락 단위의 escape 정리는 _add_classified_paragraph에서 수행)
+    2) 곧은 따옴표(" ') → 둥근 따옴표(“ ” ‘ ’) 변환 [v3.4.1]
+       (전체 본문 한 번에 처리 — 단락 단위 아님)
+    3) (단락 단위의 escape 정리는 _add_classified_paragraph에서 수행)
     """
     text = _strip_trailing_meta_block(text)
-    text = _curl_quotes(text)
-    text = _strip_leading_underscores(text)
+    text = _convert_straight_quotes(text)
     return text
 
 
@@ -1097,39 +1063,6 @@ def _self_test():
     assert "저 사람" not in cleaned2, "v3.1.4: 메타 사이 본문 인용도 제거되어야 함"
     assert "다음 회차 연결:" not in cleaned2, "v3.1.4: 메타 끝 제거 실패"
     assert "본문 열 번째 줄." in cleaned2, "v3.1.4: 진짜 본문 마지막 줄이 잘려나감"
-    
-    # ★ [v3.1.5] 곧은 따옴표 → 둥근 따옴표 (짝맞춤)
-    _DQ, _SQ = chr(34), chr(39)
-    assert _curl_quotes(_DQ + "누구세요?" + _DQ) == chr(0x201C) + "누구세요?" + chr(0x201D), \
-        "곧은 큰따옴표 변환 실패"
-    assert _curl_quotes(_SQ + "괜찮아" + _SQ) == chr(0x2018) + "괜찮아" + chr(0x2019), \
-        "곧은 작은따옴표 변환 실패"
-    # 본문 전체 흐름: 단락 경계를 넘어선 짝맞춤
-    multi = _DQ + "첫 대사" + _DQ + "\n지문 한 줄.\n" + _DQ + "둘째 대사" + _DQ
-    curled = _curl_quotes(multi)
-    assert curled.count(chr(0x201C)) == 2 and curled.count(chr(0x201D)) == 2, \
-        "여러 단락 따옴표 짝맞춤 실패"
-    # 이미 둥근 따옴표는 그대로
-    already = chr(0x201C) + "그대로" + chr(0x201D)
-    assert _curl_quotes(already) == already, "둥근 따옴표가 변형됨"
-    
-    # ★ [v3.1.5] 문장 앞 언더바 제거
-    assert _strip_leading_underscores("_괜찮아.") == "괜찮아.", "문장 앞 언더바 제거 실패"
-    assert _strip_leading_underscores("…괜찮아.") == "…괜찮아.", "줄임표가 변형됨"
-    assert _strip_leading_underscores("  _이건 그냥 일이야.") == "  이건 그냥 일이야.", \
-        "공백+언더바 제거 실패"
-    assert _strip_leading_underscores("그는 a_b 변수를 봤다.") == "그는 a_b 변수를 봤다.", \
-        "본문 중간 언더바가 제거됨"
-    multiline = "_첫 줄\n둘째 줄\n_셋째 줄"
-    assert _strip_leading_underscores(multiline) == "첫 줄\n둘째 줄\n셋째 줄", \
-        "여러 줄 언더바 제거 실패"
-    
-    # ★ [v3.1.5] _sanitize_episode_text 통합 동작
-    raw_s = _DQ + "안녕" + _DQ + "\n_속마음이다.\n일반 지문."
-    sanitized = _sanitize_episode_text(raw_s)
-    assert _DQ not in sanitized, "sanitize에서 곧은 따옴표 미변환"
-    assert "\n_속마음" not in sanitized and "속마음이다." in sanitized, \
-        "sanitize에서 언더바 미제거"
     
     # ★ [v3.1] 메타정보 클리닝 검증
     from io import BytesIO
