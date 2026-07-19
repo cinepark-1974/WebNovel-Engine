@@ -1,5 +1,5 @@
 """
-engine_validator.py — Engine v3.3 (구 v3.0 Phase C)
+engine_validator.py — Engine v3.5 (구 v3.0 Phase C)
 ====================================================
 회차 자가 검수·재료 활용 검증·전환점 자동 감지
 
@@ -28,6 +28,12 @@ engine_validator.py — Engine v3.3 (구 v3.0 Phase C)
 11. ADULT_CONTENT_FIDELITY — 19금 콘텐츠 충실도 (관능 묘사 빈도·강도)
     · 19금/듀얼 작품: 가중치 0.40 (단일 최대)
     · 15금 작품: 가중치 0 (비활성)
+
+[신규 1축 (v3.5)]
+12. NUMERIC_PRECISION     — A22 수치 정밀 표현 절제 (계측기 문체 방지)
+    · "1.5초씩 훑었다" "3초간 봤다" "0.3초 늦게" 같은 계측기 문체 검출
+    · 3단 심각도 (1군 지각·행동 / 2군 정밀 거리·비율 / 3군 시간 경과)
+    · 시각·층수·나이·금액 등 서사적으로 정당한 수치는 예외 처리
 
 등급별 동적 가중치:
 - 19금/듀얼 작품: ADULT_CONTENT_FIDELITY 0.40 + 기존 10축 0.60 비례 분배
@@ -463,7 +469,7 @@ def compute_episode_validation_score(
     intimacy_schedule: Optional[list] = None,  # ★ v3.3+ — 19금 콘텐츠 검수용
     rating_mode: str = "",              # ★ v3.3+ — 등급별 가중치 결정용
 ) -> dict:
-    """회차 단독 11축 종합 점수 (v3.3부터 확장).
+    """회차 단독 12축 종합 점수 (v3.5부터 확장).
     
     Returns:
         {
@@ -481,6 +487,8 @@ def compute_episode_validation_score(
                 "LENGTH_DISCIPLINE":      {...},
                 # 신규 1축 (v3.3)
                 "ADULT_CONTENT_FIDELITY": {score, applicable, detail},
+                # 신규 1축 (v3.5)
+                "NUMERIC_PRECISION":      {score, critical, detail},
             },
             "overall": 0~100,
             "grade": "PASS|WARN|REDO",
@@ -607,18 +615,29 @@ def compute_episode_validation_score(
         "detail": adult_score["detail"],
     }
     
-    # ─── 등급별 동적 가중치 (v3.3) ─────────────────
+    # ─── [v3.5 신규] 12번째 축 ──────────────────────
+    # 12) NUMERIC_PRECISION — A22 수치 정밀 표현 절제 (계측기 문체 방지)
+    numeric_score = _score_numeric_precision(written_text)
+    axes["NUMERIC_PRECISION"] = {
+        "score": numeric_score["score"],
+        "critical": False,
+        "detail": numeric_score["detail"],
+    }
+    
+    # ─── 등급별 동적 가중치 (v3.3 → v3.5 재조정) ────
     is_adult = bool(rating_mode and ("19" in rating_mode or "듀얼" in rating_mode))
     
     if is_adult:
-        # 19금/듀얼 작품 — ADULT_CONTENT_FIDELITY 0.40, 나머지 10축 0.60
+        # 19금/듀얼 작품 — ADULT_CONTENT_FIDELITY 0.40, 나머지 11축 0.60
+        # [v3.5] NUMERIC_PRECISION 0.05 신설 — NAMING/PROSE_HYGIENE 각 0.02, PLANT 0.01 차감
         weights = {
             "ADULT_CONTENT_FIDELITY": 0.40,
             "DIALOGUE_RATIO":         0.12,
             "MATERIAL_USAGE":         0.08,
-            "NAMING_DISCIPLINE":      0.08,
-            "PROSE_HYGIENE":          0.08,
-            "PLANT_USAGE":            0.06,
+            "NAMING_DISCIPLINE":      0.06,
+            "PROSE_HYGIENE":          0.06,
+            "NUMERIC_PRECISION":      0.05,
+            "PLANT_USAGE":            0.05,
             "CHARACTER_CONSISTENCY":  0.04,
             "CLIFFHANGER_STRENGTH":   0.04,
             "MARKET_VIABILITY":       0.04,
@@ -626,18 +645,21 @@ def compute_episode_validation_score(
             "LENGTH_DISCIPLINE":      0.03,
         }
     else:
-        # 15금/미설정 작품 — ADULT_CONTENT_FIDELITY 0, 기존 10축 v3.2 가중치 유지
+        # 15금/미설정 작품 — ADULT_CONTENT_FIDELITY 0
+        # [v3.5] NUMERIC_PRECISION 0.08 신설 — DIALOGUE 0.03, NAMING 0.02,
+        #        PROSE_HYGIENE 0.02, MATERIAL 0.01 차감
         weights = {
             "ADULT_CONTENT_FIDELITY": 0.00,
-            "MATERIAL_USAGE":         0.12,
+            "MATERIAL_USAGE":         0.11,
             "CHARACTER_CONSISTENCY":  0.08,
             "CLIFFHANGER_STRENGTH":   0.08,
             "MISE_EN_SCENE":          0.05,
             "MARKET_VIABILITY":       0.08,
             "PLANT_USAGE":            0.09,
-            "DIALOGUE_RATIO":         0.20,
-            "NAMING_DISCIPLINE":      0.12,
-            "PROSE_HYGIENE":          0.12,
+            "DIALOGUE_RATIO":         0.17,
+            "NAMING_DISCIPLINE":      0.10,
+            "PROSE_HYGIENE":          0.10,
+            "NUMERIC_PRECISION":      0.08,
             "LENGTH_DISCIPLINE":      0.06,
         }
     
@@ -1414,6 +1436,162 @@ def _score_prose_hygiene(text: str, prev_episodes_text: str = "") -> dict:
             "heavy_repeats_in_ep": [(p, c) for p, c in heavy_repeats_in_ep[:5]],
             "threshold_said": "회차당 4회 이상 페널티 증가",
             "threshold_repeat": "회차 내 같은 구절 3회 이상",
+        }
+    }
+
+
+# ============================================================================
+# [v3.5 신규] A22 수치 정밀 표현 검출 — 계측기 문체 방지
+# ============================================================================
+
+_NP_NUM = r'(?:\d+(?:\.\d+)?|[한두세네다섯여섯일곱여덟아홉열]|반)'
+
+# 1군 — 지각·행동을 초 단위로 계측하는 문체 (가장 심각)
+_NP_TIER1 = [
+    (r'{n}\s*초(?:씩|간|쯤|가량|여|만에|\s*동안|\s*뒤|\s*후)?\s*(?:씩\s*)?'
+     r'(?:훑|봤|보았|바라|응시|멈|정지|지연|늦|기다|침묵|버티|버텼|쳐다)'.format(n=_NP_NUM),
+     "초 단위 지각·행동"),
+    (r'{n}\s*초\.'.format(n=_NP_NUM), "초 단독 문장"),
+    (r'{n}\s*초\s*(?:늦|빠르|먼저|이내|만에)'.format(n=_NP_NUM), "초 단위 반응속도"),
+    (r'0\.\d+\s*초', "소수점 초"),
+    (r'\d+\.\d+\s*(?:미터|m|초|분)', "소수점 계측"),
+]
+
+# 2군 — 인물 시점 서술에서 부자연스러운 정밀 거리·비율
+_NP_TIER2 = [
+    (r'\d+(?:\.\d+)?\s*(?:미터|센티|센치|밀리|킬로|m|cm|mm|km)', "정밀 거리"),
+    (r'\d+(?:\.\d+)?\s*(?:퍼센트|%|도)(?![가-힣])', "정밀 비율·각도"),
+    (r'정확히\s*{n}\s*(?:초|분|시간|미터|번|걸음)'.format(n=_NP_NUM), "'정확히' + 수치"),
+    (r'각각\s*{n}\s*(?:초|분|번)'.format(n=_NP_NUM), "'각각' + 수치"),
+]
+
+# 3군 — 시간 경과 계측 (경미. 서사상 필요한 경우도 있음)
+_NP_TIER3 = [
+    (r'{n}\s*분(?:이|은|만에|쯤|간|여)?\s*(?:지났|흘렀|경과|멈|기다)'.format(n=_NP_NUM),
+     "분 단위 경과 계측"),
+]
+
+# 예외 — 서사적으로 정당한 수치 (시각·층수·나이·금액·회차 등)
+_NP_EXEMPT = [
+    r'\d+\s*시\s*\d+\s*분',
+    r'오[전후]\s*\d+\s*시',
+    r'\d+\s*층',
+    r'\d+\s*세\s*(?:여성|남성|남자|여자|아이)',
+    r'\d+\s*(?:원|만원|억|천원)',
+    r'\d+\s*화\b',
+    r'\d+\s*년\s*(?:생|전|후|째)',
+]
+
+_NP_REWRITE_HINTS = {
+    "초 단위 지각·행동": "'잠깐 훑었다' '한참을 봤다' '눈을 떼지 못했다' 등으로 환원",
+    "초 단독 문장":      "'숨을 한 번 고르는 사이' '눈을 감았다 떴다' 등 신체 동작으로 환원",
+    "초 단위 반응속도":  "'반 박자 늦게' '한 박자 뒤에' 등 감각적 표현으로 환원",
+    "소수점 초":         "소수점 시간 표기 삭제. '아주 잠깐' '찰나' 등으로 환원",
+    "소수점 계측":       "소수점 수치 삭제. '몇 걸음 앞' '손 닿을 거리' 등으로 환원",
+    "정밀 거리":         "'몇 걸음 떨어진' '골목 하나 건너' 등 체감 거리로 환원",
+    "정밀 비율·각도":    "수치 대신 상태 묘사로 환원",
+    "'정확히' + 수치":   "'정확히'를 빼고 '한참' '얼마쯤' 등 모호한 시간으로 환원",
+    "'각각' + 수치":     "'차례로' '하나씩' 등 순서 표현으로 환원",
+    "분 단위 경과 계측": "'한참이 지났다' '얼마 뒤' 등으로 환원",
+}
+
+
+def detect_numeric_precision(text: str) -> dict:
+    """[v3.5 신규] A22 — 계측기 문체(수치 정밀 표현) 검출.
+
+    "1.5초씩 훑었다" "3초간 봤다" "0.3초 늦게" 처럼 인물의 지각·행동을
+    계측기 로그처럼 수치화하는 문체를 3단 심각도로 검출한다.
+
+    Returns:
+        {"hits": [...], "tier1": n, "tier2": n, "tier3": n, "total": n}
+    """
+    if not text:
+        return {"hits": [], "tier1": 0, "tier2": 0, "tier3": 0, "total": 0}
+
+    import re
+
+    exempt_spans = []
+    for pat in _NP_EXEMPT:
+        for m in re.finditer(pat, text):
+            exempt_spans.append(m.span())
+
+    def _is_exempt(span):
+        s, e = span
+        return any(not (e <= es or s >= ee) for es, ee in exempt_spans)
+
+    hits = []
+    counts = {1: 0, 2: 0, 3: 0}
+    seen = []
+
+    for tier, group in ((1, _NP_TIER1), (2, _NP_TIER2), (3, _NP_TIER3)):
+        for pat, label in group:
+            for m in re.finditer(pat, text):
+                if _is_exempt(m.span()):
+                    continue
+                s, e = m.span()
+                # 상위 군에서 이미 잡힌 구간은 중복 계상하지 않음
+                if any(not (e <= ss or s >= ee) for ss, ee in seen):
+                    continue
+                seen.append((s, e))
+                counts[tier] += 1
+                ls = max(0, s - 25)
+                le = min(len(text), e + 25)
+                hits.append({
+                    "tier": tier,
+                    "label": label,
+                    "match": m.group().strip(),
+                    "context": text[ls:le].replace("\n", " ").strip(),
+                })
+
+    return {
+        "hits": hits,
+        "tier1": counts[1],
+        "tier2": counts[2],
+        "tier3": counts[3],
+        "total": len(hits),
+    }
+
+
+def _score_numeric_precision(text: str) -> dict:
+    """[v3.5 신규] A22 수치 정밀 표현 절제 점수.
+
+    감점 기준 (심각도 가중):
+    - 1군 (지각·행동 초 단위): 건당 -12
+    - 2군 (정밀 거리·비율):    건당 -7
+    - 3군 (시간 경과 계측):    건당 -3
+
+    회차당 1군 0건 + 2군 1건 이하가 목표. 100점 = 계측기 문체 없음.
+    """
+    if not text:
+        return {"score": 50, "detail": {"reason": "본문 없음"}}
+
+    det = detect_numeric_precision(text)
+
+    score = 100
+    score -= det["tier1"] * 12
+    score -= det["tier2"] * 7
+    score -= det["tier3"] * 3
+    score = max(0, min(100, score))
+
+    # 작가용 환원 제안 (상위 5건)
+    suggestions = []
+    for h in det["hits"][:5]:
+        suggestions.append({
+            "found": h["match"],
+            "context": h["context"],
+            "hint": _NP_REWRITE_HINTS.get(h["label"], "감각·행동 표현으로 환원"),
+        })
+
+    return {
+        "score": score,
+        "detail": {
+            "total_hits": det["total"],
+            "tier1_count": det["tier1"],
+            "tier2_count": det["tier2"],
+            "tier3_count": det["tier3"],
+            "hits": det["hits"][:10],
+            "suggestions": suggestions,
+            "threshold": "1군 0건 + 2군 1건 이하 권장",
         }
     }
 
@@ -2231,7 +2409,43 @@ def _self_test():
     assert "LENGTH_DISCIPLINE" in result["axes"], "LENGTH_DISCIPLINE 축 누락"
     # v3.3 신규
     assert "ADULT_CONTENT_FIDELITY" in result["axes"], "ADULT_CONTENT_FIDELITY 축 누락"
-    assert len(result["axes"]) == 11, f"축 개수 불일치: {len(result['axes'])}"
+    # v3.5 신규
+    assert "NUMERIC_PRECISION" in result["axes"], "NUMERIC_PRECISION 축 누락"
+    assert len(result["axes"]) == 12, f"축 개수 불일치: {len(result['axes'])}"
+
+    # ★ [v3.5] NUMERIC_PRECISION (A22) 동작 검증
+    _bad = (
+        "그는 세 방향을 각각 1.5초씩 훑었다.\n"
+        "건우는 그 얼룩을 3초간 봤다.\n"
+        "시선이 0.3초 늦게 초점을 맞췄다.\n"
+        "표적은 정면으로 4.2미터.\n"
+    )
+    _r = _score_numeric_precision(_bad)
+    assert _r["detail"]["tier1_count"] >= 3, f"1군 검출 실패: {_r['detail']}"
+    assert _r["score"] < 60, f"계측기 문체인데 점수가 높음: {_r['score']}"
+    assert _r["detail"]["suggestions"], "환원 제안이 비어 있음"
+
+    # 예외 처리 검증 — 시각·층수·나이·금액은 감점하지 않는다
+    _ok = (
+        "시계가 3시 07분을 가리켰다.\n"
+        "빌라 2층 창문에 불이 켜져 있었다.\n"
+        "30세 여성이었다. 삼천만 원을 건넸다.\n"
+        "그는 한참을 봤다. 눈을 감았다 떴다.\n"
+    )
+    _r2 = _score_numeric_precision(_ok)
+    assert _r2["score"] == 100, f"정상 문장인데 감점됨: {_r2['score']} / {_r2['detail']}"
+
+    # 가중치 합 검증 (19금·15금 양쪽)
+    for _rm in ("19금만", "15금만"):
+        _res = compute_episode_validation_score(
+            {"title": "테스트", "genre": "현대로맨스"},
+            char_bible_test,
+            test_text,
+            ep_number=1, total_eps=50, rating_mode=_rm,
+        )
+        _w = _res["weights_used"]
+        assert len(_w) == 12, f"{_rm} 가중치 축 개수 불일치: {len(_w)}"
+        assert abs(sum(_w.values()) - 1.0) < 1e-9, f"{_rm} 가중치 합 != 1.0: {sum(_w.values())}"
     
     # ★ [v3.3] ADULT_CONTENT_FIDELITY 동작 검증
     # 15금 작품 — applicable=False

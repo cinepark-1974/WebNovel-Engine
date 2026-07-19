@@ -1,5 +1,5 @@
 """
-👖 BLUE JEANS WEB NOVEL ENGINE v3.4 — main.py
+👖 BLUE JEANS WEB NOVEL ENGINE v3.5 — main.py
 3단계 파이프라인 (CONCEPT → BUILD-UP → WRITING) + EXTENSION
 Core Arc 완결형 설계 + 인기 대응 확장 모드
 v3.0: Phase A 데이터 모듈 통합 (motifs/character/market/strategy)
@@ -16,6 +16,10 @@ v3.4: 학술 논문 기반 메이저 업데이트 (백종인 2022 + 스나이더
       · A19·A20·A21 룰 본문 집필 프롬프트에 강제 주입
 v3.4.1: [버그 수정] STEP 3-4 독자 시뮬레이터 multiselect 크래시 해결
         · concept_persona가 READER_PERSONAS 키와 불일치할 때 default 필터링
+v3.5: 계측기 문체 차단 (수치 정밀 표현 절제)
+      · A22. 수치 정밀 표현 금지 룰 본문 집필 프롬프트에 강제 주입
+      · NUMERIC_PRECISION 12번째 자가검수 축 + UI 라벨 추가
+      · 12축 가중치 재조정 (19금 0.05 / 15금 0.08)
 © 2026 BLUE JEANS PICTURES
 """
 
@@ -3367,7 +3371,7 @@ with main_tabs[2]:
                             # (15금 트랙은 가중치 0으로 자동 처리)
                             
                             # 1차: 패턴 매칭 검수 (빠름·무비용)
-                            with st.spinner(f"1차 패턴 매칭 검수 중... (11축 v3.4 — 19금 충실도 포함, {check_rating} 트랙)"):
+                            with st.spinner(f"1차 패턴 매칭 검수 중... (12축 v3.5 — 19금 충실도 + A22 포함, {check_rating} 트랙)"):
                                 rule_result = compute_episode_validation_score(
                                     concept=concept,
                                     character_bible=chars_data,
@@ -3441,7 +3445,7 @@ with main_tabs[2]:
                                 st.metric("최저 회차", f"EP{w['ep']} ({w['overall']})")
                         
                         # 5축 평균
-                        st.markdown("**11축 누적 평균** (v3.4)")
+                        st.markdown("**12축 누적 평균** (v3.5)")
                         axis_labels = {
                             "MATERIAL_USAGE": "재료 활용",
                             "CHARACTER_CONSISTENCY": "캐릭터 차별화",
@@ -3454,6 +3458,7 @@ with main_tabs[2]:
                             "PROSE_HYGIENE": "지문 위생 (A1·반복)",
                             "LENGTH_DISCIPLINE": "분량 규율",
                             "ADULT_CONTENT_FIDELITY": "19금 콘텐츠 충실도",
+                            "NUMERIC_PRECISION": "수치 정밀 표현 절제 (A22)",
                         }
                         for ax, score in summary.get("axis_avgs", {}).items():
                             label = axis_labels.get(ax, ax)
