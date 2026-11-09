@@ -249,7 +249,7 @@ textarea { font-family: var(--body) !important; font-size: 0.9rem !important; }
 # ══════════════════════════════════════════════
 # Brand Header
 # ══════════════════════════════════════════════
-render_header("WEB NOVEL ENGINE")
+render_header("WEB NOVEL ENGINE", tagline="SERIALIZED WEB NOVEL")
 
 # ══════════════════════════════════════════════
 # API Client
