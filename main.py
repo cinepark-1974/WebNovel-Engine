@@ -24,6 +24,7 @@ v3.5: 계측기 문체 차단 (수치 정밀 표현 절제)
 """
 
 import streamlit as st
+from bj_header import render_header  # 공통 헤더 (Writer Engine 기준)
 import anthropic
 import json
 import re
@@ -248,13 +249,7 @@ textarea { font-family: var(--body) !important; font-size: 0.9rem !important; }
 # ══════════════════════════════════════════════
 # Brand Header
 # ══════════════════════════════════════════════
-st.markdown("""
-<div class="brand-header">
-    <div class="company">BLUE JEANS PICTURES</div>
-    <div class="engine">WEB NOVEL ENGINE</div>
-    <div class="tagline">YOUNG · VINTAGE · FREE · INNOVATIVE</div>
-</div>
-""", unsafe_allow_html=True)
+render_header("WEB NOVEL ENGINE")
 
 # ══════════════════════════════════════════════
 # API Client
